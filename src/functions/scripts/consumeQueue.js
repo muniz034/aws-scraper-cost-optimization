@@ -4,6 +4,7 @@ import { parentPort, Worker, isMainThread, workerData } from "worker_threads";
 import PQueue from "p-queue";
 import minimist from "minimist";
 import config from "config";
+import os from "os";
 
 import startScrapingBatch from "../startScrapingBatch.js";
 import getInstanceId from "../../utils/getInstanceId.js";
@@ -70,7 +71,7 @@ if(isMainThread){
   
   const queue = new PQueue({concurrency: 1});
   const instanceId = await getInstanceId();
-  const cloudWatchHelper = new CloudWatchHelper();
+  const cloudWatchHelper = new CloudWatchHelper(clouwatchLogGroupName ?? config.get("AWS").CLOUDWATCH_LOG_GROUP_NAME);
   const logStreamName = `consume-queue-execution_${Date.now()}_${instanceId}`;
 
   let processedBatches = 0;
@@ -83,7 +84,7 @@ if(isMainThread){
   logger.info(getLocalTime(), "ConsumeQueue script initiated with parameters ", { readBatchSize, logStreamName });
 
   // ==================== Cria threads e seta os eventListeners ======================== //
-  const threadCount = 2;
+  const threadCount = os.cpus().length;
   const threads = new Set();
 
   for(let i = 0; i < threadCount; i++) threads.add(new Worker("./src/functions/scripts/consumeQueue.js", { workerData: { id: i, readBatchSize, sqsQueueUrl, s3ResultBucketName, clouwatchLogGroupName} }));
@@ -118,7 +119,7 @@ if(isMainThread){
 
         logger.info(getLocalTime(), `[MASTER] Logging execution metrics`, {
           processedBatches,
-          averageMessageProcessingTimeAccumulator,
+          // averageMessageProcessingTimeAccumulator,
           averageMessageProcessingTime,
           averageMessageServiceTime,
           executionProcessingTimeStandardDeviation,
@@ -146,7 +147,7 @@ if(isMainThread){
   // ============ Inicia processo de Requisição de Mensagens e Scraping ================ //
   let browser = await launchBrowser();
   let counter = 0; // Contador com finalidade de "resetar" o browser, para evitar memory leak
-  const { id, readBatchSize,sqsQueueUrl, s3ResultBucketName, clouwatchLogGroupName } = workerData;
+  const { id, readBatchSize, sqsQueueUrl, s3ResultBucketName, clouwatchLogGroupName } = workerData;
   const tryAgainDelay = 1000;
 
   const SQS_QUEUE_URL = sqsQueueUrl ?? config.get("AWS").SQS_QUEUE_URL;
@@ -163,7 +164,7 @@ if(isMainThread){
     if(!browser.isConnected()){
       logger.info(getLocalTime(), `[${id}] Browser was closed, opening another one`);
       browser = await launchBrowser();
-    } else if(counter > 10) {
+    } else if(counter > 5) {
       logger.info(getLocalTime(), `[${id}] Retrieved +${counter} batches, restarting the browser`);
       await browser.close();
       browser = await launchBrowser();
@@ -222,7 +223,7 @@ if(isMainThread){
         messageProcessingTimeStandardDeviationOnBatch
       });
 
-      logger.info(getLocalTime(), `[${id}] Logging batch metrics`, { averageMessageProcessingTimeOnBatch, averageMessageServiceTimeOnBatch, messageProcessingTimeStandardDeviationOnBatch });
+      // logger.info(getLocalTime(), `[${id}] Logging batch metrics`, { averageMessageProcessingTimeOnBatch, averageMessageServiceTimeOnBatch, messageProcessingTimeStandardDeviationOnBatch });
 
       await cloudWatchHelper.logAndRegisterMessage(
         JSON.stringify({

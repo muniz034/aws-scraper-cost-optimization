@@ -8,6 +8,12 @@ import * as fs from "fs";
 import sleep from "../../utils/sleep.js";
 import getLocalTime from "../../utils/getLocalTime.js";
 
+function getRandomInt(min, max) {
+  min = Math.ceil(min);
+  max = Math.floor(max);
+  return Math.floor(Math.random() * (max - min) + min);
+}
+
 class PoissonProcess {
   // averageTimeBetweenEvents - Tempo Médio entre Eventos
   // maxNumberOfObservableEvents - Número Máximo de Ocorrência de Eventos
@@ -101,13 +107,15 @@ if(!batchSize) throw new Error("batchSize expected as parameter --batchSize=x");
 if(!numberOfBatches) throw new Error("numberOfBatches expected as parameter --numberOfBatches=x");
 if(!delay) throw new Error("delay expected as parameter --delay=x");
 
-const defaultMessage = {
-  type: "esaj",
-  name: "sp",
-  informations: {
-    cpf: "11111"
-  }
-};
+const searchList = [
+  "Universidade Federal Fluminense",
+  "Universidade Federal do Rio de Janeiro",
+  "Universidade Federal Rural do Rio de Janeiro",
+  "Universidade do Estado do Rio de Janeiro",
+  "Universidade de São Paulo",
+  "Harvard University",
+  "University of Bordeaux",
+];
 
 const poisson = new PoissonProcess(delay, { maxNumberOfObservableEvents: numberOfBatches });
 const id = new Date().toLocaleString("en-US", { timeZone: "America/Sao_Paulo" }).replace(/[^0-9]/g, "");;
@@ -117,7 +125,7 @@ const [
   arrivalTimeList
 ] = [...poisson.generateArrivalTimesList()];
 
-logger.info(getLocalTime(), "PopulateQueue script initiated with parameters: ", { ...defaultMessage, batchSize, numberOfBatches, delay });
+logger.info(getLocalTime(), "PopulateQueue script initiated with parameters: ", { batchSize, numberOfBatches, delay });
 logger.info(getLocalTime(), "Saving arrivalTimeList to: ", { file: `./populate_data_${id}.csv` });
 
 arrivalTimeListToCSV(`./results/populate_data_${id}.csv`, id, arrivalTimeList, batchSize);
@@ -129,9 +137,17 @@ for(let time of interArrivalTimeList){
 
   if(index != numberOfBatches) await sleep(time);
 
-  logger.info(getLocalTime(), "Sending batch", { batchNumber: index });
+  let messageToSend = {
+    type: "wikipedia",
+    name: "wiki",
+    informations: {
+      search: searchList[getRandomInt(0, searchList.length)]
+    }
+  };
 
-  const messages = Array.from({ length: batchSize }, (_, index) => ({ body: defaultMessage, deduplicationId: index.toString() }));
+  logger.info(getLocalTime(), "Sending batch", { batchNumber: index, message: messageToSend });
+
+  const messages = Array.from({ length: batchSize }, (_, index) => ({ body: messageToSend, deduplicationId: index.toString() }));
 
   const promises = messages.map((message) => sendMessage(message.body));
 

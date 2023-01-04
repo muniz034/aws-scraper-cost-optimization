@@ -5,14 +5,14 @@ import { InvalidInputError } from "../../utils/errors.js";
 import getLocalTime from "../../utils/getLocalTime.js";
 
 export default class {
-  url = "https://esaj.tjsp.jus.br/cposg/open.do";
+  url = "https://en.wikipedia.org/wiki/Main_Page";
 
   constructor(informations) {
     const {
-      cpf,
+      search,
     } = informations;
 
-    if (!cpf) throw new InvalidInputError("Scraper must have cpf information");
+    if (!search) throw new InvalidInputError("Scraper must have search information");
 
     this.informations = informations;
   }
@@ -22,20 +22,17 @@ export default class {
 
     const browser = _browser;
 
-    const cpf = this.informations.cpf;
+    const search = this.informations.search;
 
     const page = await browser.newPage();
 
     await page.goto(this.url, {timeout: 0});
 
-    await page.select("select[name='cbPesquisa']", "DOCPARTE");
+    await page.type("input[id='searchInput']", search);
 
-    await page.type("input[id='campo_DOCPARTE']", cpf);
+    await page.click("input[id='searchButton']");
 
-    await Promise.all([
-      await page.click("input[type='submit']"),
-      await page.waitForSelector("div[id='listagemDeProcessos']")
-    ]);
+    await page.waitForFunction(() => document.readyState === "complete");
 
     const html = await page.content();
 

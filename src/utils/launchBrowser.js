@@ -1,8 +1,5 @@
-import chromium from "chrome-aws-lambda";
 import puppeteer from "puppeteer";
-import config from "config";
-
-import { ConfigurationError } from "./errors.js";
+import os from "os";
 
 // In order to mimic the flags utilized in chrome-aws-lambda
 const ChromiumArgs = [
@@ -32,12 +29,18 @@ const ChromiumArgs = [
 ];
 
 export default async function launchBrowser () {
-  let executablePath;
-  
+  // if(os.type() == "Linux"){
+  //   return puppeteer.launch({
+  //     executablePath: "/usr/bin/google-chrome-stable",
+  //     args: ChromiumArgs,
+  //     headless: true,
+  //   });
+  // } else {
   return puppeteer.launch({
     args: ChromiumArgs,
     headless: true,
   });
+  // }
 
   // if(config.get("Enviroment").IS_INSTANCE){
   //   const { CHROME_PATH: path } = process.env;
