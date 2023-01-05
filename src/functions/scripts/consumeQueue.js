@@ -11,6 +11,7 @@ import getInstanceId from "../../utils/getInstanceId.js";
 import CloudWatchHelper from "../../helpers/cloudWatchHelper.js";
 import getLocalTime from "../../utils/getLocalTime.js";
 import launchBrowser from "../../utils/launchBrowser.js";
+import validateChromium from "../../utils/validateChromium.js";
 
 async function processMessages(messages, browser, S3_RESULT_BUCKET_NAME) {
   const messagesBodies = messages.map(
@@ -65,7 +66,10 @@ if(isMainThread){
     s3ResultBucketName,
     clouwatchLogGroupName
   } = minimist(process.argv.slice(2));
+  
+  const isChromiumWorking = await validateChromium();
 
+  if(!isChromiumWorking) throw new Error("It was not possible to execute Chromium");
   if(!readBatchSize) throw new Error("readBatchSize expected as parameter --readBatchSize=x");
   if(readBatchSize > 10) logger.warn(getLocalTime(), `readBatchSize expected to be less than 10, will be limited to 10`, { readBatchSize });
   
@@ -86,8 +90,12 @@ if(isMainThread){
   // ==================== Cria threads e seta os eventListeners ======================== //
   const threadCount = os.cpus().length;
   const threads = new Set();
+  const batchPerThread = Math.floor(readBatchSize / threadCount);
 
-  for(let i = 0; i < threadCount; i++) threads.add(new Worker("./src/functions/scripts/consumeQueue.js", { workerData: { id: i, readBatchSize, sqsQueueUrl, s3ResultBucketName, clouwatchLogGroupName} }));
+  for(let i = 0; i < threadCount; i++){
+    let batchSize = i <= (readBatchSize % threadCount) ? batchPerThread + 1 : batchPerThread;
+    threads.add(new Worker("./src/functions/scripts/consumeQueue.js", { workerData: { id: i, readBatchSize: batchSize, sqsQueueUrl, s3ResultBucketName, clouwatchLogGroupName} }));
+  }
 
   for(let worker of threads) {
     worker.on("error", (err) => { 
@@ -145,8 +153,6 @@ if(isMainThread){
   // =================================================================================== //
 } else {
   // ============ Inicia processo de Requisição de Mensagens e Scraping ================ //
-  let browser = await launchBrowser();
-  let counter = 0; // Contador com finalidade de "resetar" o browser, para evitar memory leak
   const { id, readBatchSize, sqsQueueUrl, s3ResultBucketName, clouwatchLogGroupName } = workerData;
   const tryAgainDelay = 1000;
 
@@ -156,93 +162,148 @@ if(isMainThread){
 
   const instanceId = await getInstanceId();
   const cloudWatchHelper = new CloudWatchHelper(CLOUDWATCH_LOG_GROUP_NAME);
-  const logStreamName = `consume-queue-execution_${Date.now()}_${instanceId}_thread${id}`;
 
-  await cloudWatchHelper.initializeLogStream(logStreamName);
+  let browser = await launchBrowser();
+  let memoryLeakCounter = 0; // Contador com finalidade de "resetar" o browser, para evitar memory leak
+
+  await cloudWatchHelper.initializeLogStream(`consume-queue-execution_${Date.now()}_${instanceId}_thread${id}`);
+
+  // creditBalance = await CloudWatchHelper.getLastMetric({
+  //   metricDataQuery: {
+  //     Id: "cpuCreditBalance",
+  //     MetricStat: {
+  //       Metric: {
+  //         Dimensions: [
+  //           {
+  //             Name: "InstanceId",
+  //             Value: instanceId
+  //           },
+  //         ],
+  //         MetricName: "CPUCreditBalance",
+  //         Namespace: "AWS/EC2"
+  //       },
+  //       Period: 60,
+  //       Stat: "Maximum",
+  //     },
+  //   }
+  // });
+
+  // frameworkState = "accrue";
+
+  // Aqui mudar tag framework-state para ACCRUE se a variavel não ter valor ACCRUE (https://docs.aws.amazon.com/AWSJavaScriptSDK/v3/latest/clients/client-ec2/classes/createtagscommand.html)
+  // Salvar uma variavel com esse valor tb para nao precisar ficar buscando toda hr ou editando
 
   while(true) {
-    if(!browser.isConnected()){
-      logger.info(getLocalTime(), `[${id}] Browser was closed, opening another one`);
-      browser = await launchBrowser();
-    } else if(counter > 5) {
-      logger.info(getLocalTime(), `[${id}] Retrieved +${counter} batches, restarting the browser`);
-      await browser.close();
-      browser = await launchBrowser();
-      counter = 0;
-    }
+    // if(frameworkState != "accrue") frameworkState = "accrue";
 
-    let Messages = [];
-    let numberOfReads = 0;
-    
-    // Ler mensagens
-    while(Messages.length < readBatchSize && numberOfReads < 3) {
-      const params = {
-        QueueUrl: SQS_QUEUE_URL,
-        MaxNumberOfMessages: readBatchSize < 10 ? readBatchSize : 10,
-        AttributeNames: ["ApproximateFirstReceiveTimestamp"] // if is smaller then maximum use it, else use SQS maximum per read (10)
-      };
-  
-      const { Messages: NewMessages = [] } = await sqs.send(new ReceiveMessageCommand(params));
-  
-      Messages = Messages.concat(NewMessages);
-      numberOfReads += 1;
-    };
-  
-    if(Messages.length) {
-      logger.info(getLocalTime(), `[${id}] Initiating processMessages script`, { messagesNumber: Messages.length });
+    // while creditBalance < creditLimit
+      // Aqui mudar tag framework-state para SPEND se a variavel não ter valor SPEND (https://docs.aws.amazon.com/AWSJavaScriptSDK/v3/latest/clients/client-ec2/classes/createtagscommand.html)
+      // if(frameworkState != "spend") frameworkState = "spend";
 
-      let result;
+      // creditBalance = await CloudWatchHelper.getLastMetric({
+      //   metricDataQuery: {
+      //     Id: "cpuCreditBalance",
+      //     MetricStat: {
+      //       Metric: {
+      //         Dimensions: [
+      //           {
+      //             Name: "InstanceId",
+      //             Value: instanceId
+      //           },
+      //         ],
+      //         MetricName: "CPUCreditBalance",
+      //         Namespace: "AWS/EC2"
+      //       },
+      //       Period: 60,
+      //       Stat: "Maximum",
+      //     },
+      //   }
+      // });
 
-      try {
-        result = await processMessages(Messages, browser, S3_RESULT_BUCKET_NAME);
-      } catch(err) {
-        continue;
+      // Checa se o browser foi desconectado ou precisa de reinicialização
+      // O browser pode ser desconectado se aconteceu algum erro em algum pedido (vide função processMessages())
+      if(!browser.isConnected()){
+        logger.info(getLocalTime(), `[${id}] Browser was closed, opening another one`);
+        browser = await launchBrowser();
+      } else if(memoryLeakCounter > 5) {
+        logger.info(getLocalTime(), `[${id}] Retrieved +${memoryLeakCounter} batches, restarting the browser`);
+        await browser.close();
+        browser = await launchBrowser();
+        memoryLeakCounter = 0;
       }
 
-      if(!result) continue;
+      let Messages = [];
+      let numberOfReads = 0;
       
-      const {
-        receiptsToDelete,
-        averageMessageProcessingTimeOnBatch,
-        averageMessageServiceTimeOnBatch,
-        messageProcessingTimeStandardDeviationOnBatch,
-      } = result;
+      // Ler mensagens
+      while(Messages.length < readBatchSize && numberOfReads < 3) {
+        const params = {
+          QueueUrl: SQS_QUEUE_URL,
+          MaxNumberOfMessages: readBatchSize < 10 ? readBatchSize : 10,
+          AttributeNames: ["ApproximateFirstReceiveTimestamp"] // if is smaller then maximum use it, else use SQS maximum per read (10)
+        };
+    
+        const { Messages: NewMessages = [] } = await sqs.send(new ReceiveMessageCommand(params));
+    
+        Messages = Messages.concat(NewMessages);
+        numberOfReads += 1;
+      };
+    
+      if(Messages.length) {
+        logger.info(getLocalTime(), `[${id}] Initiating processMessages script`, { messagesNumber: Messages.length });
 
-      // Deleta mensagens que foram de fato processadas
-      const receiptsToDeletePromises = [];
+        let result;
 
-      for(const ReceiptHandle of receiptsToDelete){
-        receiptsToDeletePromises.push(sqs.send(new DeleteMessageCommand({ QueueUrl: SQS_QUEUE_URL, ReceiptHandle })));
-      }
+        try {
+          result = await processMessages(Messages, browser, S3_RESULT_BUCKET_NAME);
+        } catch(err) {
+          continue;
+        }
 
-      await Promise.all(receiptsToDeletePromises);
-
-      parentPort.postMessage({
-        averageMessageProcessingTimeOnBatch,
-        averageMessageServiceTimeOnBatch,
-        messageProcessingTimeStandardDeviationOnBatch
-      });
-
-      // logger.info(getLocalTime(), `[${id}] Logging batch metrics`, { averageMessageProcessingTimeOnBatch, averageMessageServiceTimeOnBatch, messageProcessingTimeStandardDeviationOnBatch });
-
-      await cloudWatchHelper.logAndRegisterMessage(
-        JSON.stringify({
-          message: "Messages successfully processed",
-          type: "batchMetrics",
-          instanceId,
+        if(!result) continue;
+        
+        const {
+          receiptsToDelete,
           averageMessageProcessingTimeOnBatch,
           averageMessageServiceTimeOnBatch,
           messageProcessingTimeStandardDeviationOnBatch,
-        })
-      );
+        } = result;
 
-      counter += 1;
-  
-    } else {
-      // logger.info(getLocalTime(), `[${id}] Queue is empty, waiting to try again`, { tryAgainDelay });
-      // await browser.close();
-      // break;
-    }
+        // Deleta mensagens que foram de fato processadas
+        const receiptsToDeletePromises = [];
+
+        for(const ReceiptHandle of receiptsToDelete){
+          receiptsToDeletePromises.push(sqs.send(new DeleteMessageCommand({ QueueUrl: SQS_QUEUE_URL, ReceiptHandle })));
+        }
+
+        await Promise.all(receiptsToDeletePromises);
+
+        parentPort.postMessage({
+          averageMessageProcessingTimeOnBatch,
+          averageMessageServiceTimeOnBatch,
+          messageProcessingTimeStandardDeviationOnBatch
+        });
+
+        // logger.info(getLocalTime(), `[${id}] Logging batch metrics`, { averageMessageProcessingTimeOnBatch, averageMessageServiceTimeOnBatch, messageProcessingTimeStandardDeviationOnBatch });
+
+        await cloudWatchHelper.logAndRegisterMessage(
+          JSON.stringify({
+            message: "Messages successfully processed",
+            type: "batchMetrics",
+            instanceId,
+            averageMessageProcessingTimeOnBatch,
+            averageMessageServiceTimeOnBatch,
+            messageProcessingTimeStandardDeviationOnBatch,
+          })
+        );
+
+        memoryLeakCounter += 1;
+    
+      } else {
+        // logger.info(getLocalTime(), `[${id}] Queue is empty, waiting to try again`, { tryAgainDelay });
+        // await browser.close();
+        // break;
+      }
   }
   // =================================================================================== //
 }

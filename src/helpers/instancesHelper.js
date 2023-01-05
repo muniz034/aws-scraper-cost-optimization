@@ -51,8 +51,8 @@ export default class InstancesHelper {
           ResourceType: "instance",
           Tags: [
             {
-              Key: "createdBy",
-              Value: "orchestrator"
+              Key: "isOrchestrator",
+              Value: "false"
             }
           ]
         }
@@ -76,8 +76,8 @@ export default class InstancesHelper {
         maximumNumberOfInstances: numberOfInstances,
         filters: [
           {
-            Name: "tag:createdBy",
-            Values: ["orchestrator"]
+            Name: "tag:isOrchestrator",
+            Values: ["false"]
           },
           {
             Name: "instance-state-name",

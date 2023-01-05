@@ -1,6 +1,7 @@
 import logger from "loglevel";
 import { CloudWatchLogsClient, CreateLogStreamCommand, PutLogEventsCommand, FilterLogEventsCommand  } from "@aws-sdk/client-cloudwatch-logs";
 import { CloudWatchClient, GetMetricDataCommand } from "@aws-sdk/client-cloudwatch";
+import config from "config";
 
 const cloudwatch = new CloudWatchClient({ region: "us-east-1" });
 const cloudwatchLogs = new CloudWatchLogsClient({ region: "us-east-1" });
@@ -60,7 +61,7 @@ export default class CloudWatchHelper {
     const {
       events,
     } = await cloudwatchLogs.send(new FilterLogEventsCommand({
-      logGroupName: this.CLOUDWATCH_LOG_GROUP_NAME,
+      logGroupName: this.CLOUDWATCH_LOG_GROUP_NAME ?? config.get("AWS").CLOUDWATCH_LOG_GROUP_NAME,
       filterPattern,
       startTime,
     }));

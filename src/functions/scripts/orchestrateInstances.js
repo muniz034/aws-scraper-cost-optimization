@@ -114,7 +114,36 @@ const job = new CronJob(
       ],
     });
 
-    const burstableInstanceId = clusterInstances.find((instance) => instance.InstanceType.includes("t3")).InstanceId;
+    // Buscar instancias em estado de ACCRUE no ciclo atual
+    // const accrueInstances = await InstancesHelper.getInstances({
+    //   filters: [
+    //     {
+    //       Name: "tag:frameworkState",
+    //       Values: ["accrue"]
+    //     },
+    //   ],
+    // });
+
+    // Buscar instancias em estado de SPEND no ciclo atual
+    // const spendInstances = await InstancesHelper.getInstances({
+    //   filters: [
+    //     {
+    //       Name: "tag:frameworkState",
+    //       Values: ["spend"]
+    //     },
+    //   ],
+    // });
+
+    const orchestratorInstance = (await InstancesHelper.getInstances({
+      filters: [
+        {
+          Name: "tag:isOrchestrator",
+          Values: ["true"]
+        },
+      ],
+    }))[0];
+
+    const orchestratorInstanceId = orchestratorInstance.InstanceId;
 
     const currentCreditBalance = await CloudWatchHelper.getLastMetric({
       metricDataQuery: {
@@ -124,7 +153,7 @@ const job = new CronJob(
             Dimensions: [
               {
                 Name: "InstanceId",
-                Value: burstableInstanceId
+                Value: orchestratorInstanceId
               },
             ],
             MetricName: "CPUCreditBalance",
@@ -144,7 +173,7 @@ const job = new CronJob(
             Dimensions: [
               {
                 Name: "InstanceId",
-                Value: burstableInstanceId
+                Value: orchestratorInstanceId
               },
             ],
             MetricName: "CPUUtilization",
@@ -221,7 +250,8 @@ const job = new CronJob(
       const actualClusterSize = clusterInstances.length;
 
       logger.info(getLocalTime(), { idealClusterSize, actualClusterSize, newClusterSize });
-
+      
+      // if newClusterSize > accrueInstances.length + spendInstances.length
       if(newClusterSize > actualClusterSize) {
         const newInstances = await InstancesHelper.createInstances({
           numberOfInstances: newClusterSize - actualClusterSize,
@@ -243,8 +273,7 @@ const job = new CronJob(
         );
 
         Promise.all(startCrawlPromises);
-
-      } else if (newClusterSize < actualClusterSize) {
+      } else if (newClusterSize < actualClusterSize) { // accrueInstances.length > spendInstances.length && approximateAgeOfOldestMessage < sla
         if (approximateAgeOfOldestMessage < sla) {
           await InstancesHelper.terminateInstances({ numberOfInstances: actualClusterSize - newClusterSize });
         } else {
@@ -254,7 +283,6 @@ const job = new CronJob(
 
       const currentTimestamp = (currentIteration + 1) * cronIntervalInSeconds;
 
-      // Update metric records
       clusterSizeRecords.push([actualClusterSize, currentTimestamp]);
       creditBalanceRecords.push([currentCreditBalance, currentTimestamp]);
       processingTimeRecords.push([averageClusterProcessingTime / 1000, currentTimestamp]);
@@ -263,18 +291,9 @@ const job = new CronJob(
       currentCostRecords.push([currentCost, currentTimestamp]);
 
       currentIteration += 1;
+
     } else {
       const resultLabel = new Date().toLocaleString("en-US", { timeZone: "America/Sao_Paulo" }).replace(/[^0-9]/g, "");
-
-      // const clusterAverageProcessingTimeVariance = processingTimeRecords.reduce(
-      //   (accumulator, [processingTime]) => processingTime > 0
-      //                                       ? accumulator + ((processingTime - (averageClusterProcessingTime / 1000)) ** 2)
-      //                                       : accumulator,
-      //   0,
-      // ) / processingTimeRecords.length;
-
-      // const clusterMessageProcessingTimeStandardDeviation = Math.sqrt(clusterAverageProcessingTimeVariance);
-
       let data = "id;time;cost;clusterSize;processingTimeRecords;approximateNumberOfMessagesRecords;creditBalanceRecords;cpuUsageRecords\n";
 
       for(let i = 0; i < currentIteration; i++) {
@@ -286,7 +305,6 @@ const job = new CronJob(
         data += `;${approximateNumberOfMessagesRecords[i][0]}`;
         data += `;${creditBalanceRecords[i][0]}`;
         data += `;${cpuUsageRecords[i][0]}`;
-        // Deviation
         data += "\n";
       }
 

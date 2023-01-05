@@ -29,42 +29,16 @@ const ChromiumArgs = [
 ];
 
 export default async function launchBrowser () {
-  // if(os.type() == "Linux"){
-  //   return puppeteer.launch({
-  //     executablePath: "/usr/bin/google-chrome-stable",
-  //     args: ChromiumArgs,
-  //     headless: true,
-  //   });
-  // } else {
-  return puppeteer.launch({
-    args: ChromiumArgs,
-    headless: true,
-  });
-  // }
-
-  // if(config.get("Enviroment").IS_INSTANCE){
-  //   const { CHROME_PATH: path } = process.env;
-
-  //   if (!path) throw new ConfigurationError("Must export CHROME_PATH environment variable");
-
-  //   executablePath = process.env.CHROME_PATH;
-
-  //   return chromium.puppeteer.launch({
-  //     args: chromium.args,
-  //     headless: true,
-  //     executablePath,
-  //   });
-  // } else if(config.get("Enviroment").IS_LOCAL) {
-  //   return puppeteer.launch({
-  //     args: ChromiumArgs,
-  //     headless: true,
-  //   });
-  // } else {
-  //   executablePath = await chromium.executablePath;
-  //   return chromium.puppeteer.launch({
-  //     args: chromium.args,
-  //     headless: true,
-  //     executablePath,
-  //   });
-  // }
+  if(os.type() == "Linux"){
+    return puppeteer.launch({
+      args: ChromiumArgs,
+      headless: true,
+      executablePath: "/home/ec2-user/.cache/puppeteer/linux-1069273/chrome-linux/chrome"
+    });
+  } else {
+    return puppeteer.launch({
+      args: ChromiumArgs,
+      headless: true
+    });
+  }
 };
