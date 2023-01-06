@@ -3,4 +3,4 @@ config
 local
 src/unit_tests
 tests
-results
+*.csv

@@ -25,4 +25,6 @@ export default async function validateChromium() {
       return false;
     }
   }
+
+  return true;
 }

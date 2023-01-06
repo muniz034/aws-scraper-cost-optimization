@@ -20,8 +20,8 @@ async function processMessages(messages, browser, S3_RESULT_BUCKET_NAME) {
   );
 
   const results = await startScrapingBatch({ entries: messagesBodies }, browser, S3_RESULT_BUCKET_NAME);
-
   const receiptsToDelete = [];
+  let sampleFailedRequestInformation;
 
   for(const result of results){
     const { ReceiptHandle } = result.tags;
@@ -29,11 +29,15 @@ async function processMessages(messages, browser, S3_RESULT_BUCKET_NAME) {
     if(result.success){
       receiptsToDelete.push(ReceiptHandle);
     } else {
-      logger.error(getLocalTime(), "A Scraping Request has failed -- Closing browser");
+      sampleFailedRequestInformation = { result };
     }
   }
 
-  if(receiptsToDelete.length != results.length) await browser.close();
+  if(receiptsToDelete.length != results.length){
+    logger.error(getLocalTime(), "A Scraping Request has failed -- Closing browser");
+    logger.info(getLocalTime(), "Sample", { sampleFailedRequestInformation });
+    await browser.close();
+  }
 
   const processedResults = results.filter((result) => result.success);
 
