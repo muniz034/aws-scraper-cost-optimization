@@ -113,8 +113,6 @@ const searchList = [
   "Universidade Federal Rural do Rio de Janeiro",
   "Universidade do Estado do Rio de Janeiro",
   "Universidade de São Paulo",
-  "Harvard University",
-  "University of Bordeaux",
 ];
 
 const poisson = new PoissonProcess(delay, { maxNumberOfObservableEvents: numberOfBatches });

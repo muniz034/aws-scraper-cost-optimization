@@ -244,8 +244,8 @@ const job = new CronJob(
     if(approximateNumberOfMessages) {
       const idealClusterSize = Math.ceil((approximateNumberOfMessages * averageClusterServiceTime) / (sla * parallelProcessingCapacity));
 
-      // const newClusterSize = Math.min(maximumClusterSize, idealClusterSize);
-      const newClusterSize = 1;
+      const newClusterSize = Math.min(maximumClusterSize, idealClusterSize);
+      // const newClusterSize = 1;
 
       const actualClusterSize = clusterInstances.length;
 
@@ -263,6 +263,7 @@ const job = new CronJob(
             const instanceStatus = await InstancesHelper.waitInstanceFinalStatus({ instanceId });
 
             if(instanceStatus === "running") {
+              logger.info(getLocalTime(), "Waiting 40s to continue...");
               await sleep(40000); // 40 sec, wait after status changes to running
 
               await InstancesHelper.startQueueConsumeOnInstance({ instanceId, privateKey, readBatchSize: parallelProcessingCapacity, clouwatchLogGroupName: config.get("AWS").CLOUDWATCH_LOG_GROUP_NAME, sqsQueueUrl: config.get("AWS").SQS_QUEUE_URL, s3ResultBucketName: config.get("AWS").S3_RESULT_BUCKET_NAME });

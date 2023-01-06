@@ -1,5 +1,5 @@
 import logger from "loglevel";
-import { EC2Client, DescribeInstancesCommand, RunInstancesCommand, TerminateInstancesCommand } from "@aws-sdk/client-ec2";
+import { EC2Client, DescribeInstancesCommand, RunInstancesCommand, TerminateInstancesCommand, DescribeInstanceStatusCommand } from "@aws-sdk/client-ec2";
 import { NodeSSH } from "node-ssh";
 import config from "config";
 
@@ -27,9 +27,7 @@ export default class InstancesHelper {
       [],
     );
 
-    const slicedInstances = maximumNumberOfInstances && instances.length > maximumNumberOfInstances
-                                        ? instances.slice(0, maximumNumberOfInstances)
-                                        : instances;
+    const slicedInstances = maximumNumberOfInstances && instances.length > maximumNumberOfInstances ? instances.slice(0, maximumNumberOfInstances) : instances;
 
     return slicedInstances;
   }
@@ -85,11 +83,13 @@ export default class InstancesHelper {
           },
         ],
       });
-
+      
       instanceIds = instances.map((instance) => instance.InstanceId);
     }
 
     if (instanceIds?.length) {
+      logger.info(getLocalTime(), "Terminating instances", { instanceIds });
+
       const {
         TerminatingInstances: terminatingInstances,
       } = await ec2.send(new TerminateInstancesCommand({
@@ -106,46 +106,42 @@ export default class InstancesHelper {
         )
       );
     } else {
-      logger.warn("Couldn\"t find instances to delete");
+      logger.warn(getLocalTime(), "Couldn't find instances to delete");
 
       return [];
     }
   }
 
   static async getInstanceStatus({ instanceId }) {
-    let statusName;
+    const instances = await ec2.send(new DescribeInstanceStatusCommand({
+      InstanceIds: [instanceId],
+    }));
 
-    try {
-      const {
-        InstanceStatuses: [{
-          InstanceState: {
-            Name: newStatusName
-          },
-        } = {}],
-      } = await ec2.send(new DescribeInstanceStatus({
-        InstanceIds: [instanceId],
-      }));
+    const instanceExists = instances ?? false;
 
-      statusName = newStatusName;
-    } catch (error) {
-      statusName = "unavailable";
+    if(instanceExists){
+      let isPending = instances.InstanceStatuses.length == 0;
+      if(isPending) return "unavailable";
+      
+      return instances.InstanceStatuses[0].InstanceState.Name;
     }
 
-    return statusName;
+    return "unavailable";
   }
 
   static async waitInstanceFinalStatus({ instanceId }) {
     let status = await this.getInstanceStatus({ instanceId });
 
-    logger.info("Fetched initial instance status", { instanceStatus: status });
+    logger.info(getLocalTime(), "Fetched initial instance status", { instanceStatus: status, instanceId });
 
     while (!["running", "shutting-down", "terminated", "stopped"].includes(status)) {
-      logger.info("Fetched non final instance status, waiting 10 seconds and trying again", { instanceStatus: status });
+      logger.info(getLocalTime(), "Fetched non final instance status, waiting 10 seconds and trying again", { instanceStatus: status, instanceId });
       await sleep(10000);
 
       status = await this.getInstanceStatus({ instanceId });
     }
 
+    logger.info(getLocalTime(), "Fetched final instance status", { instanceStatus: status, instanceId });
     return status;
   }
 
@@ -162,7 +158,7 @@ export default class InstancesHelper {
 
     const {
       Reservations: [{ Instances: [instance] } = {}]
-    } = await ec2.send(new DescribeInstanceStatus({
+    } = await ec2.send(new DescribeInstancesCommand({
       InstanceIds: [instanceId],
     }));
 
@@ -180,8 +176,11 @@ export default class InstancesHelper {
       privateKey,
     });
 
-    const params = [`npm run consumeQueue -- --readBatchSize=${readBatchSize} --sqsQueueUrl=${sqsQueueUrl} --s3ResultBucketName=${s3ResultBucketName} --clouwatchLogGroupName=${clouwatchLogGroupName}`, { cwd:"/home/ec2-user/aws-scraper-cost-optimization" }];
-
+    const params = [
+      `npm run consumeQueue -- --readBatchSize=${readBatchSize} --sqsQueueUrl=${sqsQueueUrl} --s3ResultBucketName=${s3ResultBucketName} --clouwatchLogGroupName=${clouwatchLogGroupName}`, 
+      { cwd:"/home/ec2-user/aws-scraper-cost-optimization" }
+    ];
+    
     logger.info(getLocalTime(), "Run consume queue", { instanceId, username, privateKey, params });
 
     return ssh.execCommand(...params);

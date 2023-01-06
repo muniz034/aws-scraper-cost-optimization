@@ -70,7 +70,7 @@ if(isMainThread){
     s3ResultBucketName,
     clouwatchLogGroupName
   } = minimist(process.argv.slice(2));
-  
+
   const isChromiumWorking = await validateChromium();
 
   if(!isChromiumWorking) throw new Error("It was not possible to execute Chromium");
@@ -78,7 +78,7 @@ if(isMainThread){
   if(readBatchSize > 10) logger.warn(getLocalTime(), `readBatchSize expected to be less than 10, will be limited to 10`, { readBatchSize });
   
   const queue = new PQueue({concurrency: 1});
-  const instanceId = await getInstanceId();
+  const instanceId = await getInstanceId(sqsQueueUrl ? true : false);
   const cloudWatchHelper = new CloudWatchHelper(clouwatchLogGroupName ?? config.get("AWS").CLOUDWATCH_LOG_GROUP_NAME);
   const logStreamName = `consume-queue-execution_${Date.now()}_${instanceId}`;
 
@@ -97,8 +97,8 @@ if(isMainThread){
   const batchPerThread = Math.floor(readBatchSize / threadCount);
 
   for(let i = 0; i < threadCount; i++){
-    let batchSize = i <= (readBatchSize % threadCount) ? batchPerThread + 1 : batchPerThread;
-    threads.add(new Worker("./src/functions/scripts/consumeQueue.js", { workerData: { id: i, readBatchSize: batchSize, sqsQueueUrl, s3ResultBucketName, clouwatchLogGroupName} }));
+    let batchSize = i < (readBatchSize % threadCount) ? batchPerThread + 1 : batchPerThread;
+    threads.add(new Worker("./src/functions/scripts/consumeQueue.js", { workerData: { id: i, instanceId, readBatchSize: batchSize, sqsQueueUrl, s3ResultBucketName, clouwatchLogGroupName} }));
   }
 
   for(let worker of threads) {
@@ -157,14 +157,13 @@ if(isMainThread){
   // =================================================================================== //
 } else {
   // ============ Inicia processo de Requisição de Mensagens e Scraping ================ //
-  const { id, readBatchSize, sqsQueueUrl, s3ResultBucketName, clouwatchLogGroupName } = workerData;
+  const { id, readBatchSize, sqsQueueUrl, s3ResultBucketName, clouwatchLogGroupName, instanceId } = workerData;
   const tryAgainDelay = 1000;
 
   const SQS_QUEUE_URL = sqsQueueUrl ?? config.get("AWS").SQS_QUEUE_URL;
   const S3_RESULT_BUCKET_NAME = s3ResultBucketName ?? config.get("AWS").S3_RESULT_BUCKET_NAME;
   const CLOUDWATCH_LOG_GROUP_NAME = clouwatchLogGroupName ?? config.get("AWS").CLOUDWATCH_LOG_GROUP_NAME;
 
-  const instanceId = await getInstanceId();
   const cloudWatchHelper = new CloudWatchHelper(CLOUDWATCH_LOG_GROUP_NAME);
 
   let browser = await launchBrowser();
@@ -237,10 +236,9 @@ if(isMainThread){
       }
 
       let Messages = [];
-      let numberOfReads = 0;
       
       // Ler mensagens
-      while(Messages.length < readBatchSize && numberOfReads < 3) {
+      while(Messages.length < readBatchSize) {
         const params = {
           QueueUrl: SQS_QUEUE_URL,
           MaxNumberOfMessages: readBatchSize < 10 ? readBatchSize : 10,
@@ -250,7 +248,6 @@ if(isMainThread){
         const { Messages: NewMessages = [] } = await sqs.send(new ReceiveMessageCommand(params));
     
         Messages = Messages.concat(NewMessages);
-        numberOfReads += 1;
       };
     
       if(Messages.length) {
