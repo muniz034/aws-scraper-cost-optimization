@@ -29,7 +29,7 @@ async function processMessages(messages, browser, S3_RESULT_BUCKET_NAME) {
     if(result.success){
       receiptsToDelete.push(ReceiptHandle);
     } else {
-      sampleFailedRequestInformation = { result };
+      sampleFailedRequestInformation = result;
     }
   }
 
