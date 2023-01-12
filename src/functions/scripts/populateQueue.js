@@ -73,7 +73,18 @@ function arrivalTimeListToCSV(filename, id, arrivalTimeList, batchSize) {
 
   for(let time of arrivalTimeList){
     totalMessages += batchSize;
-    data += `\n"${id}";${time};${totalMessages}`
+
+    let now = Date.now();
+    let year = new Date(now + time).getFullYear();
+    let month = (new Date(now + time).getMonth() + 1).toString().padStart(2, "0");
+    let day = new Date(now + time).getDate().toString().padStart(2, "0");
+    let hour = new Date(now + time).getHours().toString().padStart(2, "0");
+    let minute = new Date(now + time).getMinutes().toString().padStart(2, "0");
+    let seconds = new Date(now + time).getSeconds().toString().padStart(2, "0");
+
+    let parsedTime = `${month}/${day}/${year} ${hour}:${minute}:${seconds}`;
+
+    data += `\n"${id}";${parsedTime};${totalMessages}`
   }
 
   fs.writeFileSync(filename, data);
@@ -100,11 +111,12 @@ let {
   _,
   batchSize,
   numberOfBatches,
-  delay
+  delay,
+  executionTime
 } = minimist(process.argv.slice(2));
 
 if(!batchSize) throw new Error("batchSize expected as parameter --batchSize=x");
-if(!numberOfBatches) throw new Error("numberOfBatches expected as parameter --numberOfBatches=x");
+if(!numberOfBatches && !executionTime) throw new Error("numberOfBatches or executionTime expected as parameter --numberOfBatches=x | --executionTime=x");
 if(!delay) throw new Error("delay expected as parameter --delay=x");
 
 const searchList = [
@@ -115,7 +127,8 @@ const searchList = [
   "Universidade de São Paulo",
 ];
 
-const poisson = new PoissonProcess(delay, { maxNumberOfObservableEvents: numberOfBatches });
+const poissonOptions = executionTime ? { maxExecutionTime: executionTime * 60 * 60 * 1000 } : { maxNumberOfObservableEvents: numberOfBatches };
+const poisson = new PoissonProcess(delay, poissonOptions);
 const id = new Date().toLocaleString("en-US", { timeZone: "America/Sao_Paulo" }).replace(/[^0-9]/g, "");;
 
 const [
@@ -123,7 +136,7 @@ const [
   arrivalTimeList
 ] = [...poisson.generateArrivalTimesList()];
 
-logger.info(getLocalTime(), "PopulateQueue script initiated with parameters: ", { batchSize, numberOfBatches, delay });
+logger.info(getLocalTime(), "PopulateQueue script initiated with parameters: ", { batchSize, numberOfBatches, executionTime: `${executionTime} hours`, delay: `${delay} ms`, totalMessages: arrivalTimeList.length * batchSize });
 logger.info(getLocalTime(), "Saving arrivalTimeList to: ", { file: `./populate_data_${id}.csv` });
 
 arrivalTimeListToCSV(`./results/populate_data_${id}.csv`, id, arrivalTimeList, batchSize);

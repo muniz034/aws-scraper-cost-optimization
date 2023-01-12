@@ -12,7 +12,6 @@ import CloudWatchHelper from "../../helpers/cloudWatchHelper.js";
 import getLocalTime from "../../utils/getLocalTime.js";
 import launchBrowser from "../../utils/launchBrowser.js";
 import validateChromium from "../../utils/validateChromium.js";
-import InstancesHelper from "../../helpers/instancesHelper.js";
 import sleep from "../../utils/sleep.js";
 
 async function processMessages(messages, browser, S3_RESULT_BUCKET_NAME) {
@@ -89,33 +88,9 @@ if(isMainThread){
   let messageProcessingTimeStandardDeviationAccumulator = 0;
   let averageMessageServiceTimeAccumulator = 0;
 
-  let credits = await CloudWatchHelper.getLastMetric({
-    metricDataQuery: {
-      Id: "cpuCreditBalance",
-      MetricStat: {
-        Metric: {
-          Dimensions: [
-            {
-              Name: "InstanceId",
-              Value: instanceId
-            },
-          ],
-          MetricName: "CPUCreditBalance",
-          Namespace: "AWS/EC2"
-        },
-        Period: 60,
-        Stat: "Maximum",
-      },
-    }
-  });
-
-  let state = credits < 4.8 ? "accrue" : "spend";
-
-  await InstancesHelper.setTag({ instanceId, tag: "frameworkState", value: state });
-
   await cloudWatchHelper.initializeLogStream(logStreamName);
 
-  logger.info(getLocalTime(), "[MASTER] ConsumeQueue script initiated with parameters ", { readBatchSize, logStreamName });
+  logger.info(getLocalTime(), "ConsumeQueue script initiated with parameters ", { readBatchSize, logStreamName });
 
   // ==================== Cria threads e seta os eventListeners ======================== //
   const threadCount = os.cpus().length;
@@ -153,16 +128,14 @@ if(isMainThread){
         const averageMessageProcessingTime = averageMessageProcessingTimeAccumulator / processedBatches;
         const averageMessageServiceTime = averageMessageServiceTimeAccumulator / processedBatches;
         // https://stats.stackexchange.com/questions/25848/how-to-sum-a-standard-deviation
-        const standardDeviationMessage = Math.sqrt((messageProcessingTimeStandardDeviationAccumulator)/processedBatches);
-        const credits = await CloudWatchHelper.getCredits({ instanceId });
+        const executionProcessingTimeStandardDeviation = Math.sqrt((messageProcessingTimeStandardDeviationAccumulator)/processedBatches);
 
         logger.info(getLocalTime(), `[MASTER] Logging execution metrics`, {
           processedBatches,
           // averageMessageProcessingTimeAccumulator,
           averageMessageProcessingTime,
           averageMessageServiceTime,
-          standardDeviationMessage,
-          credits
+          executionProcessingTimeStandardDeviation,
         });
   
         await cloudWatchHelper.logAndRegisterMessage(
@@ -175,8 +148,7 @@ if(isMainThread){
               averageMessageProcessingTimeAccumulator,
               averageMessageProcessingTime,
               averageMessageServiceTime,
-              standardDeviationMessage,
-              credits
+              executionProcessingTimeStandardDeviation,
             }
           ),
         );
@@ -187,8 +159,7 @@ if(isMainThread){
 } else {
   // ============ Inicia processo de Requisição de Mensagens e Scraping ================ //
   const { id, readBatchSize, sqsQueueUrl, s3ResultBucketName, clouwatchLogGroupName, instanceId } = workerData;
-  const noMessageDelay = 15000;
-  const stateDelay = 60000;
+  const tryAgainDelay = 15000;
 
   const SQS_QUEUE_URL = sqsQueueUrl ?? config.get("AWS").SQS_QUEUE_URL;
   const S3_RESULT_BUCKET_NAME = s3ResultBucketName ?? config.get("AWS").S3_RESULT_BUCKET_NAME;
@@ -198,109 +169,90 @@ if(isMainThread){
 
   let browser = await launchBrowser();
   let memoryLeakCounter = 0; // Contador com finalidade de "resetar" o browser, para evitar memory leak
-  let state = await InstancesHelper.getTag({ instanceId, tag: "frameworkState" });
-  let isFirstCheck = true;
-  let lastCreditCheckTimestamp = Date.now();
 
   await cloudWatchHelper.initializeLogStream(`consume-queue-execution_${Date.now()}_${instanceId}_thread${id}`);
 
   while(true) {
-    state = await InstancesHelper.getTag({ instanceId, tag: "frameworkState" });
-    let isLastCheckFiveMinutesAgo = (Date.now() - lastCreditCheckTimestamp) > (5 * 60 * 1000);
-
-    if(id == 0 && (isLastCheckFiveMinutesAgo || isFirstCheck)){
-      let credits = await CloudWatchHelper.getCredits({ instanceId });
-
-      state = credits < 4.8 ? "accrue" : "spend";
-
-      await InstancesHelper.setTag({ instanceId, tag: "frameworkState", value: state });
-
-      isFirstCheck = false;
-      lastCreditCheckTimestamp = Date.now();
-
-      logger.info(getLocalTime(), `[${id}] CPU Credits Balance`, { credits, state, lastCreditCheck: new Date(lastCreditCheckTimestamp) });
+    if(!browser.isConnected()){
+      logger.info(getLocalTime(), `[${id}] Browser was closed, opening another one`);
+      browser = await launchBrowser();
+    } else if(memoryLeakCounter > 5) {
+      logger.info(getLocalTime(), `[${id}] Retrieved +${memoryLeakCounter} batches, restarting the browser`);
+      await browser.close();
+      browser = await launchBrowser();
+      memoryLeakCounter = 0;
     }
 
-    if(state === "spend"){
-      let { Messages: Messages = [] } = await sqs.send(new ReceiveMessageCommand({
+    let Messages = [];
+    
+    // Ler mensagens
+    while(Messages.length < readBatchSize) {
+      const params = {
         QueueUrl: SQS_QUEUE_URL,
         MaxNumberOfMessages: readBatchSize < 10 ? readBatchSize : 10,
-        AttributeNames: ["ApproximateFirstReceiveTimestamp"]
-      }));
-    
-      if(Messages.length) {
-        if(!browser.isConnected()){
-          logger.info(getLocalTime(), `[${id}] Browser was closed, opening another one`);
-          browser = await launchBrowser();
-        } else if(memoryLeakCounter > 5) {
-          logger.info(getLocalTime(), `[${id}] Retrieved ${memoryLeakCounter} batches, restarting the browser`);
-          await browser.close();
-          browser = await launchBrowser();
-          memoryLeakCounter = 0;
-        }
+        AttributeNames: ["ApproximateFirstReceiveTimestamp"] // if is smaller then maximum use it, else use SQS maximum per read (10)
+      };
+  
+      const { Messages: NewMessages = [] } = await sqs.send(new ReceiveMessageCommand(params));
+  
+      Messages = Messages.concat(NewMessages);
+    };
+  
+    if(Messages.length) {
+      logger.info(getLocalTime(), `[${id}] Initiating processMessages script`, { messagesNumber: Messages.length });
 
-        logger.info(getLocalTime(), `[${id}] Initiating processMessages script`, { messagesNumber: Messages.length });
+      let result;
 
-        let result;
+      try {
+        result = await processMessages(Messages, browser, S3_RESULT_BUCKET_NAME);
+      } catch(err) {
+        continue;
+      }
 
-        try {
-          result = await processMessages(Messages, browser, S3_RESULT_BUCKET_NAME);
-        } catch(err) {
-          continue;
-        }
+      if(!result) continue;
+      
+      const {
+        receiptsToDelete,
+        averageMessageProcessingTimeOnBatch,
+        averageMessageServiceTimeOnBatch,
+        messageProcessingTimeStandardDeviationOnBatch,
+      } = result;
 
-        if(!result) continue;
-        
-        const {
-          receiptsToDelete,
+      // Deleta mensagens que foram de fato processadas
+      const receiptsToDeletePromises = [];
+
+      for(const ReceiptHandle of receiptsToDelete){
+        receiptsToDeletePromises.push(sqs.send(new DeleteMessageCommand({ QueueUrl: SQS_QUEUE_URL, ReceiptHandle })));
+      }
+
+      await Promise.all(receiptsToDeletePromises);
+
+      parentPort.postMessage({
+        averageMessageProcessingTimeOnBatch,
+        averageMessageServiceTimeOnBatch,
+        messageProcessingTimeStandardDeviationOnBatch
+      });
+
+      // logger.info(getLocalTime(), `[${id}] Logging batch metrics`, { averageMessageProcessingTimeOnBatch, averageMessageServiceTimeOnBatch, messageProcessingTimeStandardDeviationOnBatch });
+
+      await cloudWatchHelper.logAndRegisterMessage(
+        JSON.stringify({
+          message: "Messages successfully processed",
+          type: "batchMetrics",
+          instanceId,
           averageMessageProcessingTimeOnBatch,
           averageMessageServiceTimeOnBatch,
           messageProcessingTimeStandardDeviationOnBatch,
-        } = result;
+        })
+      );
 
-        // Deleta mensagens que foram de fato processadas
-        const receiptsToDeletePromises = [];
-
-        for(const ReceiptHandle of receiptsToDelete){
-          receiptsToDeletePromises.push(sqs.send(new DeleteMessageCommand({ QueueUrl: SQS_QUEUE_URL, ReceiptHandle })));
-        }
-
-        await Promise.all(receiptsToDeletePromises);
-
-        parentPort.postMessage({
-          averageMessageProcessingTimeOnBatch,
-          averageMessageServiceTimeOnBatch,
-          messageProcessingTimeStandardDeviationOnBatch
-        });
-
-        // logger.info(getLocalTime(), `[${id}] Logging batch metrics`, { averageMessageProcessingTimeOnBatch, averageMessageServiceTimeOnBatch, messageProcessingTimeStandardDeviationOnBatch });
-
-        await cloudWatchHelper.logAndRegisterMessage(
-          JSON.stringify({
-            message: "Messages successfully processed",
-            type: "batchMetrics",
-            instanceId,
-            averageMessageProcessingTimeOnBatch,
-            averageMessageServiceTimeOnBatch,
-            messageProcessingTimeStandardDeviationOnBatch,
-          })
-        );
-
-        memoryLeakCounter += 1;
-    
-      } else {
-        logger.info(getLocalTime(), `[${id}] Queue is empty, waiting to try again`, { noMessageDelay });
-        if(browser.isConnected()) await browser.close();
-        await sleep(noMessageDelay);
-      }
-
-      state = await InstancesHelper.getTag({ instanceId, tag: "frameworkState" });
+      memoryLeakCounter += 1;
+  
     } else {
-      logger.info(getLocalTime(), `[${id}] Instance is in ACCRUE state, waiting to try again`, { stateDelay });
+      logger.info(getLocalTime(), `[${id}] Queue is empty, waiting to try again`, { tryAgainDelay });
       if(browser.isConnected()) await browser.close();
-      await sleep(stateDelay);
+      await sleep(tryAgainDelay);
     }
-
   }
   // =================================================================================== //
 }

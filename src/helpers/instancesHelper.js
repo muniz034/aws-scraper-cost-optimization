@@ -1,5 +1,5 @@
 import logger from "loglevel";
-import { EC2Client, DescribeInstancesCommand, RunInstancesCommand, TerminateInstancesCommand, DescribeInstanceStatusCommand } from "@aws-sdk/client-ec2";
+import { EC2Client, DescribeTagsCommand, CreateTagsCommand, DescribeInstancesCommand, RunInstancesCommand, TerminateInstancesCommand, DescribeInstanceStatusCommand } from "@aws-sdk/client-ec2";
 import { NodeSSH } from "node-ssh";
 import config from "config";
 
@@ -14,8 +14,6 @@ export default class InstancesHelper {
       Filters: filters,
     };
 
-    logger.info(getLocalTime(), "Fetching instances", { ...params });
-
     const {
       Reservations: reservations,
     } = await ec2.send(new DescribeInstancesCommand(params));
@@ -28,6 +26,8 @@ export default class InstancesHelper {
     );
 
     const slicedInstances = maximumNumberOfInstances && instances.length > maximumNumberOfInstances ? instances.slice(0, maximumNumberOfInstances) : instances;
+
+    logger.info(getLocalTime(), "Fetched instances", { tags: params.Filters[0].Name, values: params.Filters[0].Values, totalResults: slicedInstances.length });
 
     return slicedInstances;
   }
@@ -51,6 +51,10 @@ export default class InstancesHelper {
             {
               Key: "isOrchestrator",
               Value: "false"
+            },
+            {
+              Key: "frameworkState",
+              Value: "accrue"
             }
           ]
         }
@@ -152,7 +156,8 @@ export default class InstancesHelper {
     readBatchSize = 5,
     sqsQueueUrl,
     s3ResultBucketName,
-    clouwatchLogGroupName
+    clouwatchLogGroupName,
+    isBurstable
   } = {}) {
     logger.info(getLocalTime(), "Getting public dns of the provided instance", { instanceId });
 
@@ -176,13 +181,44 @@ export default class InstancesHelper {
       privateKey,
     });
 
-    const params = [
+    const params = isBurstable ? [
       `npm run consumeQueue -- --readBatchSize=${readBatchSize} --sqsQueueUrl=${sqsQueueUrl} --s3ResultBucketName=${s3ResultBucketName} --clouwatchLogGroupName=${clouwatchLogGroupName}`, 
+      { cwd:"/home/ec2-user/aws-scraper-cost-optimization" }
+    ] : [
+      `npm run consumeQueueOnDemand -- --readBatchSize=${readBatchSize} --sqsQueueUrl=${sqsQueueUrl} --s3ResultBucketName=${s3ResultBucketName} --clouwatchLogGroupName=${clouwatchLogGroupName}`, 
       { cwd:"/home/ec2-user/aws-scraper-cost-optimization" }
     ];
     
     logger.info(getLocalTime(), "Run consume queue", { instanceId, username, privateKey, params });
 
     return ssh.execCommand(...params);
+  }
+
+  static async setTag({ instanceId, tag, value } = {}) {
+    await ec2.send(new CreateTagsCommand({
+      Resources: [instanceId],
+      Tags: [{ Key: tag, Value: value }]
+    }));
+  }
+
+  static async getTag({ instanceId, tag } = {}) {
+    const { Tags } = await ec2.send(new DescribeTagsCommand({
+      Filters: [
+        {
+          Name: "resource-type",
+          Values: ["instance"] 
+        },
+        {
+          Name: "resource-id",
+          Values: [instanceId],
+        },
+        {
+          Name: "key",
+          Values: [tag]
+        }
+      ]
+    }));
+
+    return Tags[0].Value;
   }
 }

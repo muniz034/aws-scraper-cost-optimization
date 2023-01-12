@@ -1,19 +1,13 @@
 {
-  "name": "new-aws-scraper-cost-optimization",
+  "name": "aws-scraper-cost-optimization",
   "version": "1.0.0",
   "description": "",
   "main": "index.js",
   "type": "module",
-  "directories": {
-    "test": "tests"
-  },
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
     "consumeQueue": "node src/functions/scripts/consumeQueue.js",
+    "consumeQueueOnDemand": "node src/functions/scripts/consumeQueueOnDemand.js",
     "populateQueue": "node src/functions/scripts/populateQueue.js",
-    "populateQueueHighUsage": "node src/functions/scripts/populateQueue.js --batchSize=20 --numberOfBatches=90 --delay=10000",
-    "populateQueueMediumUsage": "node src/functions/scripts/populateQueue.js --batchSize=20 --numberOfBatches=60 --delay=15000",
-    "populateQueueLowUsage": "node src/functions/scripts/populateQueue.js --batchSize=20 --numberOfBatches=45 --delay=20000",
     "orchestrateInstances": "node src/functions/scripts/orchestrateInstances.js"
   },
   "author": "Pedro Muniz",
@@ -25,7 +19,6 @@
     "@aws-sdk/client-s3": "^3.223.0",
     "@aws-sdk/client-sqs": "^3.223.0",
     "aws-sdk": "^2.1267.0",
-    "chrome-aws-lambda": "^10.1.0",
     "config": "^3.3.8",
     "cron": "^2.1.0",
     "loglevel": "^1.8.1",
@@ -34,7 +27,6 @@
     "node-ssh": "^13.0.0",
     "p-queue": "^7.3.0",
     "puppeteer": "^19.3.0",
-    "quickchart-js": "^3.1.1",
     "uuid": "^9.0.0"
   }
 }

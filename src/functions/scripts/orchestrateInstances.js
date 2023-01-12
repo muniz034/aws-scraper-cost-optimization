@@ -10,6 +10,7 @@ import ec2Pricing from "../../constants/ec2Pricing.js";
 import InstancesHelper from "../../helpers/instancesHelper.js";
 import CloudWatchHelper from "../../helpers/cloudWatchHelper.js";
 import getLocalTime from "../../utils/getLocalTime.js";
+import getInstanceId from "../../utils/getInstanceId.js";
 
 async function getClusterMetrics({ startTime }) {
   const messages = await CloudWatchHelper.getLogMessages({
@@ -71,15 +72,17 @@ let {
   privateKey,
   resultsPath,
   maximumClusterSize,
+  isBurstable
 } = minimist(process.argv.slice(2));
 
-if(!sla) throw new Error("sla expected as parameter --sla=x");
-if(!parallelProcessingCapacity) logger.warn("parallelProcessingCapacity expected as parameter --parallelProcessingCapacity=x, default set to 10");
-if(!privateKey) logger.warn("privateKey expected as parameter --privateKey=\"/path/to\", default set to \"/home/ec2-user/aws-scraper-cost-optimization/local/aws-scraper-cost-optimization.pem\"");
-if(!resultsPath) logger.warn("resultsPath expected as parameter --resultsPath=\"/path/to\", default set to \"/home/ec2-user/aws-scraper-cost-optimization/results\"");
-if(!maximumClusterSize) logger.warn("maximumClusterSize expected as parameter --maximumClusterSize=x, default set to 5");
+if(!sla) throw new Error(`${getLocalTime()} sla expected as parameter --sla=x`);
+if(!isBurstable) throw new Error(`${getLocalTime()} isBurstable expected as parameter --isBurstable=x`);
+if(!parallelProcessingCapacity) logger.warn(getLocalTime(), "parallelProcessingCapacity expected as parameter --parallelProcessingCapacity=x, default set to 10");
+if(!privateKey) logger.warn(getLocalTime(), "privateKey expected as parameter --privateKey=\"/path/to\", default set to \"/home/ec2-user/aws-scraper-cost-optimization/local/aws-scraper-cost-optimization.pem\"");
+if(!resultsPath) logger.warn(getLocalTime(), "resultsPath expected as parameter --resultsPath=\"/path/to\", default set to \"/home/ec2-user/aws-scraper-cost-optimization/results\"");
+if(!maximumClusterSize) logger.warn(getLocalTime(), "maximumClusterSize expected as parameter --maximumClusterSize=x, default set to 5");
 
-instanceType = "t2.small";
+instanceType = isBurstable === "true" ? "t3.micro" : "m1.small";
 parallelProcessingCapacity = 10;
 privateKey = "/home/ec2-user/aws-scraper-cost-optimization/local/aws-scraper-cost-optimization.pem";
 resultsPath = "/home/ec2-user/aws-scraper-cost-optimization/results";
@@ -91,8 +94,6 @@ let currentIteration = 0;
 const startTime = Date.now();
 
 const clusterSizeRecords = []; // initial values will be added on first iteration
-const creditBalanceRecords = []; // initial values will be added on first iteration
-const cpuUsageRecords = []; // initial values will be added on first iteration
 const processingTimeRecords = [[0, 0]];
 const approximateNumberOfMessagesRecords = [[0, 0]];
 const currentCostRecords = [[0, 0]];
@@ -100,7 +101,12 @@ const currentCostRecords = [[0, 0]];
 const cronInterval = Math.ceil(sla / 4);
 const cronIntervalInSeconds = Math.ceil(cronInterval / 1000);
 
-logger.info(getLocalTime(), "OrchestrateInstances script initiated with parameters: ", { sla, instanceType, parallelProcessingCapacity, cronIntervalInSeconds });
+const instanceId = await getInstanceId();
+const cloudWatchHelper = new CloudWatchHelper(config.get("AWS").CLOUDWATCH_LOG_GROUP_NAME);
+const logStreamName = `orchestrate-instances-execution_${Date.now()}_${instanceId}`;
+await cloudWatchHelper.initializeLogStream(logStreamName);
+
+logger.info(getLocalTime(), "OrchestrateInstances script initiated with parameters: ", { sla, instanceType, parallelProcessingCapacity, cronIntervalInSeconds, isBurstable });
 
 const job = new CronJob(
   `0/${cronIntervalInSeconds} * * * * *`,
@@ -115,84 +121,30 @@ const job = new CronJob(
     });
 
     // Buscar instancias em estado de ACCRUE no ciclo atual
-    // const accrueInstances = await InstancesHelper.getInstances({
-    //   filters: [
-    //     {
-    //       Name: "tag:frameworkState",
-    //       Values: ["accrue"]
-    //     },
-    //   ],
-    // });
-
-    // Buscar instancias em estado de SPEND no ciclo atual
-    // const spendInstances = await InstancesHelper.getInstances({
-    //   filters: [
-    //     {
-    //       Name: "tag:frameworkState",
-    //       Values: ["spend"]
-    //     },
-    //   ],
-    // });
-
-    const orchestratorInstance = (await InstancesHelper.getInstances({
+    const accrueInstances = await InstancesHelper.getInstances({
       filters: [
         {
-          Name: "tag:isOrchestrator",
-          Values: ["true"]
+          Name: "tag:frameworkState",
+          Values: ["accrue"]
         },
       ],
-    }))[0];
-
-    const orchestratorInstanceId = orchestratorInstance.InstanceId;
-
-    const currentCreditBalance = await CloudWatchHelper.getLastMetric({
-      metricDataQuery: {
-        Id: "cpuCreditBalance",
-        MetricStat: {
-          Metric: {
-            Dimensions: [
-              {
-                Name: "InstanceId",
-                Value: orchestratorInstanceId
-              },
-            ],
-            MetricName: "CPUCreditBalance",
-            Namespace: "AWS/EC2"
-          },
-          Period: 60,
-          Stat: "Maximum",
-        },
-      }
     });
 
-    const currentCPUUtilization = await CloudWatchHelper.getLastMetric({
-      metricDataQuery: {
-        Id: "cpuUtilization",
-        MetricStat: {
-          Metric: {
-            Dimensions: [
-              {
-                Name: "InstanceId",
-                Value: orchestratorInstanceId
-              },
-            ],
-            MetricName: "CPUUtilization",
-            Namespace: "AWS/EC2"
-          },
-          Period: 60,
-          Stat: "Maximum",
+    // Buscar instancias em estado de SPEND no ciclo atual
+    const spendInstances = await InstancesHelper.getInstances({
+      filters: [
+        {
+          Name: "tag:frameworkState",
+          Values: ["spend"]
         },
-      }
+      ],
     });
 
     if (currentIteration > 0) {
       const activeInstanceTypes = clusterInstances.map((instance) => instance.InstanceType);
-
       for (const activeInstanceType of activeInstanceTypes) currentCost += (ec2Pricing[activeInstanceType] / 3600) * cronIntervalInSeconds;
     } else {
       clusterSizeRecords.push([clusterInstances.length, 0]);
-      creditBalanceRecords.push([currentCreditBalance, 0]);
-      cpuUsageRecords.push([currentCPUUtilization, 0]);
     }
 
     const approximateNumberOfMessages = await getApproximateNumberOfMessages();
@@ -235,60 +187,100 @@ const job = new CronJob(
         approximateNumberOfMessages,
         approximateAgeOfOldestMessage,
         averageClusterServiceTime,
-        averageClusterProcessingTime,
-        currentCreditBalance,
-        currentCPUUtilization
+        averageClusterProcessingTime
       }
     );
 
     if(approximateNumberOfMessages) {
       const idealClusterSize = Math.ceil((approximateNumberOfMessages * averageClusterServiceTime) / (sla * parallelProcessingCapacity));
 
-      const newClusterSize = Math.min(maximumClusterSize, idealClusterSize);
-      // const newClusterSize = 1;
+      // const newClusterSize = Math.min(maximumClusterSize, idealClusterSize);
+      const newClusterSize = 1;
 
       const actualClusterSize = clusterInstances.length;
 
       logger.info(getLocalTime(), { idealClusterSize, actualClusterSize, newClusterSize });
-      
-      // if newClusterSize > accrueInstances.length + spendInstances.length
-      if(newClusterSize > actualClusterSize) {
-        const newInstances = await InstancesHelper.createInstances({
-          numberOfInstances: newClusterSize - actualClusterSize,
-          instanceType
-        });
 
-        const startCrawlPromises = newInstances.map(
-          async ({ instanceId }) => {
-            const instanceStatus = await InstancesHelper.waitInstanceFinalStatus({ instanceId });
-
-            if(instanceStatus === "running") {
-              logger.info(getLocalTime(), "Waiting 40s to continue...");
-              await sleep(40000); // 40 sec, wait after status changes to running
-
-              await InstancesHelper.startQueueConsumeOnInstance({ instanceId, privateKey, readBatchSize: parallelProcessingCapacity, clouwatchLogGroupName: config.get("AWS").CLOUDWATCH_LOG_GROUP_NAME, sqsQueueUrl: config.get("AWS").SQS_QUEUE_URL, s3ResultBucketName: config.get("AWS").S3_RESULT_BUCKET_NAME });
-            } else {
-              logger.warn(getLocalTime(), "Instance failed creation", { instanceStatus });
-            }
+      await cloudWatchHelper.logAndRegisterMessage(
+        JSON.stringify(
+          {
+            message: "Current orchestrate metrics",
+            type: "orchestrateMetrics",
+            instanceId,
+            averageClusterProcessingTime,
+            averageClusterServiceTime,
+            currentCost
           }
-        );
-
-        Promise.all(startCrawlPromises);
-      } else if (newClusterSize < actualClusterSize) { // accrueInstances.length > spendInstances.length && approximateAgeOfOldestMessage < sla
-        if (approximateAgeOfOldestMessage < sla) {
-          await InstancesHelper.terminateInstances({ numberOfInstances: actualClusterSize - newClusterSize });
-        } else {
-          logger.warn(getLocalTime(), "Will not reduce cluster because oldest message is greater then SLA", { approximateAgeOfOldestMessage, sla });
+        ),
+      );
+      
+      if(isBurstable){
+        if(newClusterSize > accrueInstances.length + spendInstances.length){
+          const newInstances = await InstancesHelper.createInstances({
+            numberOfInstances: newClusterSize - actualClusterSize,
+            instanceType
+          });
+  
+          const startCrawlPromises = newInstances.map(
+            async ({ instanceId }) => {
+              const instanceStatus = await InstancesHelper.waitInstanceFinalStatus({ instanceId });
+  
+              if(instanceStatus === "running") {
+                logger.info(getLocalTime(), "Waiting 40s to continue...");
+                await sleep(40000); // 40 sec, wait after status changes to running
+  
+                await InstancesHelper.startQueueConsumeOnInstance({ instanceId, privateKey, readBatchSize: parallelProcessingCapacity, clouwatchLogGroupName: config.get("AWS").CLOUDWATCH_LOG_GROUP_NAME, sqsQueueUrl: config.get("AWS").SQS_QUEUE_URL, s3ResultBucketName: config.get("AWS").S3_RESULT_BUCKET_NAME });
+              } else {
+                logger.warn(getLocalTime(), "Instance failed creation", { instanceStatus });
+              }
+            }
+          );
+  
+          Promise.all(startCrawlPromises);
+        } else if (accrueInstances.length > spendInstances.length && approximateAgeOfOldestMessage < sla) {
+          if (approximateAgeOfOldestMessage < sla) {
+            await InstancesHelper.terminateInstances({ numberOfInstances: actualClusterSize - newClusterSize });
+          } else {
+            logger.warn(getLocalTime(), "Will not reduce cluster because oldest message is greater then SLA", { approximateAgeOfOldestMessage, sla });
+          }
+        }
+      } else {
+        if(newClusterSize > actualClusterSize) {
+          const newInstances = await InstancesHelper.createInstances({
+            numberOfInstances: newClusterSize - actualClusterSize,
+            instanceType
+          });
+  
+          const startCrawlPromises = newInstances.map(
+            async ({ instanceId }) => {
+              const instanceStatus = await InstancesHelper.waitInstanceFinalStatus({ instanceId });
+  
+              if(instanceStatus === "running") {
+                logger.info(getLocalTime(), "Waiting 40s to continue...");
+                await sleep(40000); // 40 sec, wait after status changes to running
+  
+                await InstancesHelper.startQueueConsumeOnInstance({ instanceId, privateKey, readBatchSize: parallelProcessingCapacity, clouwatchLogGroupName: config.get("AWS").CLOUDWATCH_LOG_GROUP_NAME, sqsQueueUrl: config.get("AWS").SQS_QUEUE_URL, s3ResultBucketName: config.get("AWS").S3_RESULT_BUCKET_NAME, isBurstable });
+              } else {
+                logger.warn(getLocalTime(), "Instance failed creation", { instanceStatus });
+              }
+            }
+          );
+  
+          Promise.all(startCrawlPromises);
+        } else if (newClusterSize < actualClusterSize) {
+          if (approximateAgeOfOldestMessage < sla) {
+            await InstancesHelper.terminateInstances({ numberOfInstances: actualClusterSize - newClusterSize });
+          } else {
+            logger.warn(getLocalTime(), "Will not reduce cluster because oldest message is greater then SLA", { approximateAgeOfOldestMessage, sla });
+          }
         }
       }
 
       const currentTimestamp = (currentIteration + 1) * cronIntervalInSeconds;
 
       clusterSizeRecords.push([actualClusterSize, currentTimestamp]);
-      creditBalanceRecords.push([currentCreditBalance, currentTimestamp]);
       processingTimeRecords.push([averageClusterProcessingTime / 1000, currentTimestamp]);
       approximateNumberOfMessagesRecords.push([approximateNumberOfMessages, currentTimestamp]);
-      cpuUsageRecords.push([currentCPUUtilization, currentTimestamp]);
       currentCostRecords.push([currentCost, currentTimestamp]);
 
       currentIteration += 1;
@@ -304,12 +296,10 @@ const job = new CronJob(
         data += `;${clusterSizeRecords[i][0]}`;
         data += `;${processingTimeRecords[i][0]}`;
         data += `;${approximateNumberOfMessagesRecords[i][0]}`;
-        data += `;${creditBalanceRecords[i][0]}`;
-        data += `;${cpuUsageRecords[i][0]}`;
         data += "\n";
       }
 
-      fs.writeFileSync(`${resultsPath}/execution_data_${resultLabel}.csv`, data);
+      fs.writeFileSync(`${resultsPath}/execution_data_${resultLabel}_${isBurstable === "true" ? "burstable" : "ondemand"}.csv`, data);
       
       this.stop();
     }

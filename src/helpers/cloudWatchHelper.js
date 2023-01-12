@@ -68,4 +68,38 @@ export default class CloudWatchHelper {
 
     return events.map(({ message }) => JSON.parse(message));
   }
+
+  static async getCredits({ instanceId }){
+    const now = new Date();
+
+    const {
+      MetricDataResults: [{
+        Values: [metricData],
+      }],
+    } = await cloudwatch.send(new GetMetricDataCommand({
+      StartTime: new Date(now - 360000),
+      EndTime: now,
+      MetricDataQueries: [
+        {
+        Id: "cpuCreditBalance",
+          MetricStat: {
+            Metric: {
+              Dimensions: [
+                {
+                  Name: "InstanceId",
+                  Value: instanceId
+                },
+              ],
+              MetricName: "CPUCreditBalance",
+              Namespace: "AWS/EC2"
+            },
+            Period: 60,
+            Stat: "Maximum",
+          },
+        }
+      ],
+    }));
+
+    return metricData;
+  }
 }
