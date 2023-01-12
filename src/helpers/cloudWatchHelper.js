@@ -100,6 +100,6 @@ export default class CloudWatchHelper {
       ],
     }));
 
-    return metricData;
+    return metricData ?? 0;
   }
 }

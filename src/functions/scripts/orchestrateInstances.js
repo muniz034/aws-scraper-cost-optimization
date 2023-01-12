@@ -3,7 +3,6 @@ import { SQSClient, GetQueueAttributesCommand } from "@aws-sdk/client-sqs";
 import minimist from "minimist";
 import { CronJob } from "cron";
 import config from "config";
-import fs from "fs";
 
 import sleep from "../../utils/sleep.js";
 import ec2Pricing from "../../constants/ec2Pricing.js";
@@ -93,11 +92,6 @@ let currentIteration = 0;
 
 const startTime = Date.now();
 
-const clusterSizeRecords = []; // initial values will be added on first iteration
-const processingTimeRecords = [[0, 0]];
-const approximateNumberOfMessagesRecords = [[0, 0]];
-const currentCostRecords = [[0, 0]];
-
 const cronInterval = Math.ceil(sla / 4);
 const cronIntervalInSeconds = Math.ceil(cronInterval / 1000);
 
@@ -124,6 +118,10 @@ const job = new CronJob(
     const accrueInstances = await InstancesHelper.getInstances({
       filters: [
         {
+          Name: "instance-state-name",
+          Values: ["running", "pending"]
+        },
+        {
           Name: "tag:frameworkState",
           Values: ["accrue"]
         },
@@ -132,7 +130,11 @@ const job = new CronJob(
 
     // Buscar instancias em estado de SPEND no ciclo atual
     const spendInstances = await InstancesHelper.getInstances({
-      filters: [
+      filters: [        
+        {
+          Name: "instance-state-name",
+          Values: ["running", "pending"]
+        },
         {
           Name: "tag:frameworkState",
           Values: ["spend"]
@@ -143,8 +145,6 @@ const job = new CronJob(
     if (currentIteration > 0) {
       const activeInstanceTypes = clusterInstances.map((instance) => instance.InstanceType);
       for (const activeInstanceType of activeInstanceTypes) currentCost += (ec2Pricing[activeInstanceType] / 3600) * cronIntervalInSeconds;
-    } else {
-      clusterSizeRecords.push([clusterInstances.length, 0]);
     }
 
     const approximateNumberOfMessages = await getApproximateNumberOfMessages();
@@ -194,30 +194,36 @@ const job = new CronJob(
     if(approximateNumberOfMessages) {
       const idealClusterSize = Math.ceil((approximateNumberOfMessages * averageClusterServiceTime) / (sla * parallelProcessingCapacity));
 
-      // const newClusterSize = Math.min(maximumClusterSize, idealClusterSize);
-      const newClusterSize = 1;
+      const newClusterSize = Math.min(maximumClusterSize, idealClusterSize);
+      // const newClusterSize = 1;
 
       const actualClusterSize = clusterInstances.length;
 
       logger.info(getLocalTime(), { idealClusterSize, actualClusterSize, newClusterSize });
-
-      await cloudWatchHelper.logAndRegisterMessage(
-        JSON.stringify(
-          {
-            message: "Current orchestrate metrics",
-            type: "orchestrateMetrics",
-            instanceId,
-            averageClusterProcessingTime,
-            averageClusterServiceTime,
-            currentCost
-          }
-        ),
-      );
       
       if(isBurstable){
+        await cloudWatchHelper.logAndRegisterMessage(
+          JSON.stringify(
+            {
+              message: "Current orchestrate metrics",
+              type: "orchestrateMetrics",
+              isBurstable,
+              instanceId,
+              approximateNumberOfMessages,
+              averageClusterProcessingTime: averageClusterProcessingTime / 1000,
+              averageClusterServiceTime,
+              newClusterSize,
+              actualClusterSize,
+              accrueInstances,
+              spendInstances,
+              currentCost
+            }
+          ),
+        );
+
         if(newClusterSize > accrueInstances.length + spendInstances.length){
           const newInstances = await InstancesHelper.createInstances({
-            numberOfInstances: newClusterSize - actualClusterSize,
+            numberOfInstances: newClusterSize - spendInstances.length,
             instanceType
           });
   
@@ -229,7 +235,7 @@ const job = new CronJob(
                 logger.info(getLocalTime(), "Waiting 40s to continue...");
                 await sleep(40000); // 40 sec, wait after status changes to running
   
-                await InstancesHelper.startQueueConsumeOnInstance({ instanceId, privateKey, readBatchSize: parallelProcessingCapacity, clouwatchLogGroupName: config.get("AWS").CLOUDWATCH_LOG_GROUP_NAME, sqsQueueUrl: config.get("AWS").SQS_QUEUE_URL, s3ResultBucketName: config.get("AWS").S3_RESULT_BUCKET_NAME });
+                await InstancesHelper.startQueueConsumeOnInstance({ instanceId, isBurstable, privateKey, readBatchSize: parallelProcessingCapacity, clouwatchLogGroupName: config.get("AWS").CLOUDWATCH_LOG_GROUP_NAME, sqsQueueUrl: config.get("AWS").SQS_QUEUE_URL, s3ResultBucketName: config.get("AWS").S3_RESULT_BUCKET_NAME });
               } else {
                 logger.warn(getLocalTime(), "Instance failed creation", { instanceStatus });
               }
@@ -245,6 +251,23 @@ const job = new CronJob(
           }
         }
       } else {
+        await cloudWatchHelper.logAndRegisterMessage(
+          JSON.stringify(
+            {
+              message: "Current orchestrate metrics",
+              type: "orchestrateMetrics",
+              isBurstable,
+              instanceId,
+              approximateNumberOfMessages,
+              averageClusterProcessingTime: averageClusterProcessingTime / 1000,
+              averageClusterServiceTime,
+              newClusterSize,
+              actualClusterSize,
+              currentCost
+            }
+          ),
+        );
+
         if(newClusterSize > actualClusterSize) {
           const newInstances = await InstancesHelper.createInstances({
             numberOfInstances: newClusterSize - actualClusterSize,
@@ -276,31 +299,9 @@ const job = new CronJob(
         }
       }
 
-      const currentTimestamp = (currentIteration + 1) * cronIntervalInSeconds;
-
-      clusterSizeRecords.push([actualClusterSize, currentTimestamp]);
-      processingTimeRecords.push([averageClusterProcessingTime / 1000, currentTimestamp]);
-      approximateNumberOfMessagesRecords.push([approximateNumberOfMessages, currentTimestamp]);
-      currentCostRecords.push([currentCost, currentTimestamp]);
-
       currentIteration += 1;
 
     } else {
-      const resultLabel = new Date().toLocaleString("en-US", { timeZone: "America/Sao_Paulo" }).replace(/[^0-9]/g, "");
-      let data = "id;time;cost;clusterSize;processingTimeRecords;approximateNumberOfMessagesRecords;creditBalanceRecords;cpuUsageRecords\n";
-
-      for(let i = 0; i < currentIteration; i++) {
-        data += `"${resultLabel}"`;
-        data += `;${i * (sla / 4) / 1000}`;
-        data += `;${currentCostRecords[i][0]}`;
-        data += `;${clusterSizeRecords[i][0]}`;
-        data += `;${processingTimeRecords[i][0]}`;
-        data += `;${approximateNumberOfMessagesRecords[i][0]}`;
-        data += "\n";
-      }
-
-      fs.writeFileSync(`${resultsPath}/execution_data_${resultLabel}_${isBurstable === "true" ? "burstable" : "ondemand"}.csv`, data);
-      
       this.stop();
     }
 

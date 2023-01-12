@@ -141,20 +141,23 @@ if(isMainThread){
         averageMessageProcessingTimeOnBatch,
         averageMessageServiceTimeOnBatch,
         messageProcessingTimeStandardDeviationOnBatch,
+        credits
       } = msg;
 
       await queue.add(async () => {
-        messageProcessingTimeStandardDeviationAccumulator += messageProcessingTimeStandardDeviationOnBatch ** 2;
-        averageMessageProcessingTimeAccumulator += averageMessageProcessingTimeOnBatch;
-        averageMessageServiceTimeAccumulator += averageMessageServiceTimeOnBatch;
-  
-        processedBatches += 1;
+        if(!credits){ // Caso não esteja apenas logando os créditos
+          messageProcessingTimeStandardDeviationAccumulator += messageProcessingTimeStandardDeviationOnBatch ** 2;
+          averageMessageProcessingTimeAccumulator += averageMessageProcessingTimeOnBatch;
+          averageMessageServiceTimeAccumulator += averageMessageServiceTimeOnBatch;
+    
+          processedBatches += 1;
+        }
   
         const averageMessageProcessingTime = averageMessageProcessingTimeAccumulator / processedBatches;
         const averageMessageServiceTime = averageMessageServiceTimeAccumulator / processedBatches;
         // https://stats.stackexchange.com/questions/25848/how-to-sum-a-standard-deviation
         const standardDeviationMessage = Math.sqrt((messageProcessingTimeStandardDeviationAccumulator)/processedBatches);
-        const credits = await CloudWatchHelper.getCredits({ instanceId });
+        const loggingCredits = credits ?? await CloudWatchHelper.getCredits({ instanceId });
 
         logger.info(getLocalTime(), `[MASTER] Logging execution metrics`, {
           processedBatches,
@@ -162,7 +165,7 @@ if(isMainThread){
           averageMessageProcessingTime,
           averageMessageServiceTime,
           standardDeviationMessage,
-          credits
+          loggingCredits
         });
   
         await cloudWatchHelper.logAndRegisterMessage(
@@ -176,10 +179,15 @@ if(isMainThread){
               averageMessageProcessingTime,
               averageMessageServiceTime,
               standardDeviationMessage,
-              credits
+              loggingCredits
             }
           ),
         );
+
+        state = loggingCredits < 4.8 ? "accrue" : "spend";
+        
+        if(loggingCredits < 4.8) await InstancesHelper.setTag({ instanceId, tag: "frameworkState", value: state });
+
       });
     });
   }
@@ -219,6 +227,10 @@ if(isMainThread){
       lastCreditCheckTimestamp = Date.now();
 
       logger.info(getLocalTime(), `[${id}] CPU Credits Balance`, { credits, state, lastCreditCheck: new Date(lastCreditCheckTimestamp) });
+      
+      parentPort.postMessage({
+        credits
+      });
     }
 
     if(state === "spend"){
@@ -239,7 +251,7 @@ if(isMainThread){
           memoryLeakCounter = 0;
         }
 
-        logger.info(getLocalTime(), `[${id}] Initiating processMessages script`, { messagesNumber: Messages.length });
+        logger.info(getLocalTime(), `[${id}] Initiating processMessages script`, { messagesNumber: Messages.length, isLastCheckFiveMinutesAgo });
 
         let result;
 

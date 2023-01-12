@@ -44,6 +44,7 @@ export default class InstancesHelper {
       MaxCount: numberOfInstances, // minimum number of instances to launch. If you specify a minimum that is more instances than Amazon EC2 can launch in the target Availability Zone, Amazon EC2 launches no instances.
       KeyName: config.get("AWS").EC2_KEY_PAIR_NAME,
       SecurityGroupIds: [config.get("AWS").EC2_SECURITY_GROUP_ID],
+      CreditSpecification: "standard",
       TagSpecifications: [
         {
           ResourceType: "instance",
