@@ -70,12 +70,14 @@ if(isMainThread){
     readBatchSize,
     sqsQueueUrl,
     s3ResultBucketName,
-    clouwatchLogGroupName
+    clouwatchLogGroupName,
+    creditLimit
   } = minimist(process.argv.slice(2));
 
   const isChromiumWorking = await validateChromium();
 
   if(!isChromiumWorking) throw new Error("It was not possible to execute Chromium");
+  if(!creditLimit) throw new Error("creditLimit expected as parameter --creditLimit=x");
   if(!readBatchSize) throw new Error("readBatchSize expected as parameter --readBatchSize=x");
   if(readBatchSize > 10) logger.warn(getLocalTime(), `readBatchSize expected to be less than 10, will be limited to 10`, { readBatchSize });
   
@@ -109,7 +111,7 @@ if(isMainThread){
     }
   });
 
-  let state = credits < 4.8 ? "accrue" : "spend";
+  let state = credits < creditLimit ? "accrue" : "spend";
 
   await InstancesHelper.setTag({ instanceId, tag: "frameworkState", value: state });
 
@@ -184,9 +186,9 @@ if(isMainThread){
           ),
         );
 
-        state = loggingCredits < 4.8 ? "accrue" : "spend";
+        state = loggingCredits < creditLimit ? "accrue" : "spend";
         
-        if(loggingCredits < 4.8) await InstancesHelper.setTag({ instanceId, tag: "frameworkState", value: state });
+        if(loggingCredits < creditLimit) await InstancesHelper.setTag({ instanceId, tag: "frameworkState", value: state });
 
       });
     });
@@ -219,7 +221,7 @@ if(isMainThread){
     if(id == 0 && (isLastCheckFiveMinutesAgo || isFirstCheck)){
       let credits = await CloudWatchHelper.getCredits({ instanceId });
 
-      state = credits < 4.8 ? "accrue" : "spend";
+      state = credits < creditLimit ? "accrue" : "spend";
 
       await InstancesHelper.setTag({ instanceId, tag: "frameworkState", value: state });
 

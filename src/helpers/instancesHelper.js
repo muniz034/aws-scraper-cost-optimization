@@ -32,48 +32,90 @@ export default class InstancesHelper {
     return slicedInstances;
   }
 
-  static async createInstances({ numberOfInstances = 1, instanceType = "t2.small" } = {}) {
+  static async createInstances({ numberOfInstances = 1, instanceType = "t2.small", instanceCreator } = {}) {
     logger.info(getLocalTime(), "Creating instances", { numberOfInstances, instanceType });
 
-    const {
-      Instances: instances,
-    } = await ec2.send(new RunInstancesCommand({
-      ImageId: config.get("AWS").EC2_AMI_ID,
-      InstanceType: instanceType,
-      MinCount: numberOfInstances, // maximum number of instances to launch. If you specify more instances than Amazon EC2 can launch in the target Availability Zone, Amazon EC2 launches the largest possible number of instances above MinCount
-      MaxCount: numberOfInstances, // minimum number of instances to launch. If you specify a minimum that is more instances than Amazon EC2 can launch in the target Availability Zone, Amazon EC2 launches no instances.
-      KeyName: config.get("AWS").EC2_KEY_PAIR_NAME,
-      SecurityGroupIds: [config.get("AWS").EC2_SECURITY_GROUP_ID],
-      CreditSpecification: "standard",
-      TagSpecifications: [
-        {
-          ResourceType: "instance",
-          Tags: [
-            {
-              Key: "isOrchestrator",
-              Value: "false"
-            },
-            {
-              Key: "frameworkState",
-              Value: "accrue"
-            }
-          ]
-        }
-      ],
-    }));
-
-    return instances.map(
-      (instance) => (
-        {
-          imageId: instance.ImageId,
-          instanceId: instance.InstanceId,
-          state: instance.State?.Name
-        }
-      )
-    );
+    if(instanceType === "t3.micro"){
+      const {
+        Instances: instances,
+      } = await ec2.send(new RunInstancesCommand({
+        ImageId: config.get("AWS").EC2_AMI_ID,
+        InstanceType: instanceType,
+        MinCount: numberOfInstances, // maximum number of instances to launch. If you specify more instances than Amazon EC2 can launch in the target Availability Zone, Amazon EC2 launches the largest possible number of instances above MinCount
+        MaxCount: numberOfInstances, // minimum number of instances to launch. If you specify a minimum that is more instances than Amazon EC2 can launch in the target Availability Zone, Amazon EC2 launches no instances.
+        KeyName: config.get("AWS").EC2_KEY_PAIR_NAME,
+        SecurityGroupIds: [config.get("AWS").EC2_SECURITY_GROUP_ID],
+        CreditSpecification: "standard",
+        TagSpecifications: [
+          {
+            ResourceType: "instance",
+            Tags: [
+              {
+                Key: "isOrchestrator",
+                Value: "false"
+              },
+              {
+                Key: "frameworkState",
+                Value: "accrue"
+              },
+              {
+                Key: "from",
+                Value: instanceCreator
+              }
+            ]
+          }
+        ],
+      }));
+  
+      return instances.map(
+        (instance) => (
+          {
+            imageId: instance.ImageId,
+            instanceId: instance.InstanceId,
+            state: instance.State?.Name
+          }
+        )
+      );
+    } else {
+      const {
+        Instances: instances,
+      } = await ec2.send(new RunInstancesCommand({
+        ImageId: config.get("AWS").EC2_AMI_ID,
+        InstanceType: instanceType,
+        MinCount: numberOfInstances, // maximum number of instances to launch. If you specify more instances than Amazon EC2 can launch in the target Availability Zone, Amazon EC2 launches the largest possible number of instances above MinCount
+        MaxCount: numberOfInstances, // minimum number of instances to launch. If you specify a minimum that is more instances than Amazon EC2 can launch in the target Availability Zone, Amazon EC2 launches no instances.
+        KeyName: config.get("AWS").EC2_KEY_PAIR_NAME,
+        SecurityGroupIds: [config.get("AWS").EC2_SECURITY_GROUP_ID],
+        TagSpecifications: [
+          {
+            ResourceType: "instance",
+            Tags: [
+              {
+                Key: "isOrchestrator",
+                Value: "false"
+              },
+              {
+                Key: "from",
+                Value: instanceCreator
+              }
+            ]
+          }
+        ],
+      }));
+  
+      return instances.map(
+        (instance) => (
+          {
+            imageId: instance.ImageId,
+            instanceId: instance.InstanceId,
+            state: instance.State?.Name
+          }
+        )
+      );
+    }
   }
 
-  static async terminateInstances({ instanceIds, numberOfInstances } = {}) {
+  static async terminateInstances({ instanceIds, numberOfInstances, instanceCreator } = {}) {
     if (!instanceIds?.length && numberOfInstances) {
       const instances = await this.getInstances({
         maximumNumberOfInstances: numberOfInstances,
@@ -86,6 +128,10 @@ export default class InstancesHelper {
             Name: "instance-state-name",
             Values: ["running"]
           },
+          {
+            Name: "tag:from",
+            Values: [instanceCreator]
+          }
         ],
       });
       
@@ -158,7 +204,8 @@ export default class InstancesHelper {
     sqsQueueUrl,
     s3ResultBucketName,
     clouwatchLogGroupName,
-    isBurstable
+    isBurstable,
+    creditLimit
   } = {}) {
     logger.info(getLocalTime(), "Getting public dns of the provided instance", { instanceId });
 
@@ -183,7 +230,7 @@ export default class InstancesHelper {
     });
 
     const params = isBurstable ? [
-      `npm run consumeQueue -- --readBatchSize=${readBatchSize} --sqsQueueUrl=${sqsQueueUrl} --s3ResultBucketName=${s3ResultBucketName} --clouwatchLogGroupName=${clouwatchLogGroupName}`, 
+      `npm run consumeQueue -- --creditLimit=${creditLimit} --readBatchSize=${readBatchSize} --sqsQueueUrl=${sqsQueueUrl} --s3ResultBucketName=${s3ResultBucketName} --clouwatchLogGroupName=${clouwatchLogGroupName}`, 
       { cwd:"/home/ec2-user/aws-scraper-cost-optimization" }
     ] : [
       `npm run consumeQueueOnDemand -- --readBatchSize=${readBatchSize} --sqsQueueUrl=${sqsQueueUrl} --s3ResultBucketName=${s3ResultBucketName} --clouwatchLogGroupName=${clouwatchLogGroupName}`, 

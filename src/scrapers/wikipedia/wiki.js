@@ -36,7 +36,7 @@ export default class {
 
     const html = await page.content();
 
-    logger.info(getLocalTime(), `[${workerData.id}] Fetched response`);
+    logger.info(getLocalTime(), `[${workerData ? workerData.id : "MASTER"}] Fetched response`);
 
     await page.close();
 
