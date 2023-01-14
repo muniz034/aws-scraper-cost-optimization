@@ -229,13 +229,15 @@ export default class InstancesHelper {
       privateKey,
     });
 
-    const params = isBurstable ? [
+    const params = isBurstable == "true" ? [
       `npm run consumeQueue -- --creditLimit=${creditLimit} --readBatchSize=${readBatchSize} --sqsQueueUrl=${sqsQueueUrl} --s3ResultBucketName=${s3ResultBucketName} --clouwatchLogGroupName=${clouwatchLogGroupName}`, 
       { cwd:"/home/ec2-user/aws-scraper-cost-optimization" }
     ] : [
       `npm run consumeQueueOnDemand -- --readBatchSize=${readBatchSize} --sqsQueueUrl=${sqsQueueUrl} --s3ResultBucketName=${s3ResultBucketName} --clouwatchLogGroupName=${clouwatchLogGroupName}`, 
       { cwd:"/home/ec2-user/aws-scraper-cost-optimization" }
     ];
+
+    // { cwd:"/home/ec2-user/aws-scraper-cost-optimization", onStdout(chunk) { console.log('stdoutChunk', chunk.toString('utf8')) }, onStderr(chunk) { console.log('stderrChunk', chunk.toString('utf8')) }}
     
     logger.info(getLocalTime(), "Run consume queue", { instanceId, username, privateKey, params });
 

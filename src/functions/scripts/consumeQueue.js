@@ -91,25 +91,7 @@ if(isMainThread){
   let messageProcessingTimeStandardDeviationAccumulator = 0;
   let averageMessageServiceTimeAccumulator = 0;
 
-  let credits = await CloudWatchHelper.getLastMetric({
-    metricDataQuery: {
-      Id: "cpuCreditBalance",
-      MetricStat: {
-        Metric: {
-          Dimensions: [
-            {
-              Name: "InstanceId",
-              Value: instanceId
-            },
-          ],
-          MetricName: "CPUCreditBalance",
-          Namespace: "AWS/EC2"
-        },
-        Period: 60,
-        Stat: "Maximum",
-      },
-    }
-  });
+  let credits = await CloudWatchHelper.getCredits({ instanceId });
 
   let state = credits < creditLimit ? "accrue" : "spend";
 
@@ -126,7 +108,7 @@ if(isMainThread){
 
   for(let i = 0; i < threadCount; i++){
     let batchSize = i < (readBatchSize % threadCount) ? batchPerThread + 1 : batchPerThread;
-    threads.add(new Worker("./src/functions/scripts/consumeQueue.js", { workerData: { id: i, instanceId, readBatchSize: batchSize, sqsQueueUrl, s3ResultBucketName, clouwatchLogGroupName} }));
+    threads.add(new Worker("./src/functions/scripts/consumeQueue.js", { workerData: { id: i, creditLimit, instanceId, readBatchSize: batchSize, sqsQueueUrl, s3ResultBucketName, clouwatchLogGroupName} }));
   }
 
   for(let worker of threads) {
@@ -196,7 +178,7 @@ if(isMainThread){
   // =================================================================================== //
 } else {
   // ============ Inicia processo de Requisição de Mensagens e Scraping ================ //
-  const { id, readBatchSize, sqsQueueUrl, s3ResultBucketName, clouwatchLogGroupName, instanceId } = workerData;
+  const { id, readBatchSize, sqsQueueUrl, s3ResultBucketName, clouwatchLogGroupName, instanceId, creditLimit } = workerData;
   const noMessageDelay = 15000;
   const stateDelay = 60000;
 

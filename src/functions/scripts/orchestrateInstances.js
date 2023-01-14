@@ -84,7 +84,6 @@ if(!maximumClusterSize) logger.warn(getLocalTime(), "maximumClusterSize expected
 instanceType = isBurstable === "true" ? "t3.micro" : "m1.small";
 parallelProcessingCapacity = 5;
 privateKey = "/home/ec2-user/aws-scraper-cost-optimization/local/aws-scraper-cost-optimization.pem";
-resultsPath = "/home/ec2-user/aws-scraper-cost-optimization/results";
 maximumClusterSize = 10;
 
 let currentCost = 0;
@@ -226,7 +225,7 @@ const job = new CronJob(
 
       logger.info(getLocalTime(), { idealClusterSize, actualClusterSize, newClusterSize });
       
-      if(isBurstable){
+      if(isBurstable == "true"){
         await cloudWatchHelper.logAndRegisterMessage(
           JSON.stringify(
             {
@@ -265,9 +264,15 @@ const job = new CronJob(
   
               if(instanceStatus === "running") {
                 logger.info(getLocalTime(), "Waiting 40s to continue...");
-                await sleep(40000); // 40 sec, wait after status changes to running
-  
-                await InstancesHelper.startQueueConsumeOnInstance({ instanceId, creditLimit, isBurstable, privateKey, readBatchSize: parallelProcessingCapacity, clouwatchLogGroupName: config.get("AWS").CLOUDWATCH_LOG_GROUP_NAME, sqsQueueUrl: config.get("AWS").SQS_QUEUE_URL, s3ResultBucketName: config.get("AWS").S3_RESULT_BUCKET_NAME });
+                await sleep(40000); // 20 sec, wait after status changes to running
+
+                try {
+                  await InstancesHelper.startQueueConsumeOnInstance({ instanceId, creditLimit, isBurstable, privateKey, readBatchSize: parallelProcessingCapacity, clouwatchLogGroupName: config.get("AWS").CLOUDWATCH_LOG_GROUP_NAME, sqsQueueUrl: config.get("AWS").SQS_QUEUE_URL, s3ResultBucketName: config.get("AWS").S3_RESULT_BUCKET_NAME });
+                } catch(error) {
+                  logger.info(getLocalTime(), error);
+                  await InstancesHelper.terminateInstances({ instancesId: [instanceId] });
+                }
+
               } else {
                 logger.warn(getLocalTime(), "Instance failed creation", { instanceStatus });
               }
@@ -308,16 +313,22 @@ const job = new CronJob(
   
               if(instanceStatus === "running") {
                 logger.info(getLocalTime(), "Waiting 40s to continue...");
-                await sleep(40000); // 40 sec, wait after status changes to running
+                await sleep(40000); // 20 sec, wait after status changes to running
+
+                try {
+                  await InstancesHelper.startQueueConsumeOnInstance({ instanceId, isBurstable, privateKey, readBatchSize: parallelProcessingCapacity, clouwatchLogGroupName: config.get("AWS").CLOUDWATCH_LOG_GROUP_NAME, sqsQueueUrl: config.get("AWS").SQS_QUEUE_URL, s3ResultBucketName: config.get("AWS").S3_RESULT_BUCKET_NAME });
+                } catch(error) {
+                  logger.info(getLocalTime(), error);
+                  await InstancesHelper.terminateInstances({ instancesId: [instanceId] });
+                }
   
-                await InstancesHelper.startQueueConsumeOnInstance({ instanceId, isBurstable, privateKey, readBatchSize: parallelProcessingCapacity, clouwatchLogGroupName: config.get("AWS").CLOUDWATCH_LOG_GROUP_NAME, sqsQueueUrl: config.get("AWS").SQS_QUEUE_URL, s3ResultBucketName: config.get("AWS").S3_RESULT_BUCKET_NAME });
               } else {
                 logger.warn(getLocalTime(), "Instance failed creation", { instanceStatus });
               }
             }
           );
   
-          Promise.all(startCrawlPromises);
+          Promise.allSettled(startCrawlPromises);
         } else if (newClusterSize < actualClusterSize) {
           if (approximateAgeOfOldestMessage < sla) {
             await InstancesHelper.terminateInstances({ numberOfInstances: actualClusterSize - newClusterSize, instanceCreator: instanceId });
@@ -329,8 +340,6 @@ const job = new CronJob(
 
       currentIteration += 1;
 
-    } else {
-      this.stop();
     }
 
     return true;
