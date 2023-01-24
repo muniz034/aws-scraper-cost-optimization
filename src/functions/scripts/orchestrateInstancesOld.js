@@ -70,14 +70,12 @@ let {
   parallelProcessingCapacity,
   privateKey,
   maximumClusterSize,
-  creditLimit
 } = minimist(process.argv.slice(2));
 
 let isBurstable = "true";
-let isOldStrategy = "false";
+let isOldStrategy = "true";
 
 if(!sla) throw new Error(`${getLocalTime()} sla expected as parameter --sla=x`);
-if(!creditLimit && isBurstable == "true") throw new Error("creditLimit expected as parameter --creditLimit=x");
 if(!parallelProcessingCapacity) logger.warn(getLocalTime(), "parallelProcessingCapacity expected as parameter --parallelProcessingCapacity=x, default set to 5");
 if(!privateKey) logger.warn(getLocalTime(), "privateKey expected as parameter --privateKey=\"/path/to\", default set to \"/home/ec2-user/aws-scraper-cost-optimization/local/aws-scraper-cost-optimization.pem\"");
 if(!maximumClusterSize) logger.warn(getLocalTime(), "maximumClusterSize expected as parameter --maximumClusterSize=x, default set to 10");
@@ -121,51 +119,7 @@ const job = new CronJob(
         }
       ],
     });
-
-    // Buscar instancias em estado de ACCRUE no ciclo atual
-    const accrueInstances = await InstancesHelper.getInstances({
-      filters: [
-        {
-          Name: "instance-state-name",
-          Values: ["running", "pending"]
-        },
-        {
-          Name: "tag:frameworkState",
-          Values: ["accrue"]
-        },
-        {
-          Name: "instance-type",
-          Values: [instanceType]
-        },
-        {
-          Name: "tag:from",
-          Values: [instanceId]
-        }
-      ],
-    });
-
-    // Buscar instancias em estado de SPEND no ciclo atual
-    const spendInstances = await InstancesHelper.getInstances({
-      filters: [        
-        {
-          Name: "instance-state-name",
-          Values: ["running", "pending"]
-        },
-        {
-          Name: "tag:frameworkState",
-          Values: ["spend"]
-        },
-        {
-          Name: "instance-type",
-          Values: [instanceType]
-        },
-        {
-          Name: "tag:from",
-          Values: [instanceId]
-        }
-      ],
-    });
-
+    
     if (currentIteration > 0) {
       const activeInstanceTypes = clusterInstances.map((instance) => instance.InstanceType);
       for (const activeInstanceType of activeInstanceTypes) currentCost += (ec2Pricing[activeInstanceType] / 3600) * cronIntervalInSeconds;
@@ -219,7 +173,7 @@ const job = new CronJob(
     const idealClusterSize = Math.ceil((approximateNumberOfMessages * averageClusterServiceTime) / (sla * parallelProcessingCapacity));
 
     const actualClusterSize = clusterInstances.length;
-
+    
     const newClusterSize = idealClusterSize > 0 ? Math.min(maximumClusterSize, idealClusterSize) : actualClusterSize;
 
     logger.info(getLocalTime(), { idealClusterSize, actualClusterSize, newClusterSize });
@@ -236,22 +190,14 @@ const job = new CronJob(
           averageClusterServiceTime,
           newClusterSize,
           actualClusterSize,
-          accrueInstances: accrueInstances.length,
-          spendInstances: spendInstances.length,
           currentCost
         }
       ),
     );
 
-    if(newClusterSize < (accrueInstances.length + spendInstances.length)){
-      if((accrueInstances.length > spendInstances.length || accrueInstances.length == 0) && approximateAgeOfOldestMessage < sla){
-        await InstancesHelper.terminateInstances({ numberOfInstances: (accrueInstances.length + spendInstances.length) - newClusterSize, instanceCreator: instanceId });
-      } else {
-        logger.warn(getLocalTime(), "Will not reduce cluster because oldest message is greater then SLA", { approximateAgeOfOldestMessage, sla });
-      }
-    } else if(newClusterSize > (accrueInstances.length + spendInstances.length)) {
+    if(newClusterSize > actualClusterSize) {
       const newInstances = await InstancesHelper.createInstances({
-        numberOfInstances: newClusterSize - spendInstances.length,
+        numberOfInstances: newClusterSize - actualClusterSize,
         instanceType,
         instanceCreator: instanceId,
         isOldStrategy,
@@ -267,7 +213,7 @@ const job = new CronJob(
             await sleep(40000); // 40 sec, wait after status changes to running
 
             try {
-              await InstancesHelper.startQueueConsumeOnInstance({ instanceId, creditLimit, isBurstable, privateKey, readBatchSize: parallelProcessingCapacity, clouwatchLogGroupName: config.get("AWS").CLOUDWATCH_LOG_GROUP_NAME, sqsQueueUrl: config.get("AWS").SQS_QUEUE_URL, s3ResultBucketName: config.get("AWS").S3_RESULT_BUCKET_NAME });
+              await InstancesHelper.startQueueConsumeOnInstance({ instanceId, isBurstable, privateKey, readBatchSize: parallelProcessingCapacity, clouwatchLogGroupName: config.get("AWS").CLOUDWATCH_LOG_GROUP_NAME, sqsQueueUrl: config.get("AWS").SQS_QUEUE_URL, s3ResultBucketName: config.get("AWS").S3_RESULT_BUCKET_NAME });
             } catch(error) {
               logger.info(getLocalTime(), error);
               await InstancesHelper.terminateInstances({ instancesId: [instanceId] });
@@ -279,12 +225,18 @@ const job = new CronJob(
         }
       );
 
-      Promise.all(startCrawlPromises);
+      Promise.allSettled(startCrawlPromises);
+    } else if (newClusterSize < actualClusterSize) {
+      if (approximateAgeOfOldestMessage < sla) {
+        await InstancesHelper.terminateInstances({ numberOfInstances: actualClusterSize - newClusterSize, instanceCreator: instanceId });
+      } else {
+        logger.warn(getLocalTime(), "Will not reduce cluster because oldest message is greater then SLA", { approximateAgeOfOldestMessage, sla });
+      }
     }
-    
+
     currentIteration += 1;
+
     return true;
-    
   }
 );
 

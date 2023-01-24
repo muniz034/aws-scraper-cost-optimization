@@ -7,8 +7,11 @@
   "scripts": {
     "consumeQueue": "node src/functions/scripts/consumeQueue.js",
     "consumeQueueOnDemand": "node src/functions/scripts/consumeQueueOnDemand.js",
+    "consumeQueueOld": "node src/functions/scripts/consumeQueueOld.js",
     "populateQueue": "node src/functions/scripts/populateQueue.js",
-    "orchestrateInstances": "node src/functions/scripts/orchestrateInstances.js"
+    "orchestrateInstances": "node src/functions/scripts/orchestrateInstances.js",
+    "orchestrateInstancesOnDemand": "node src/functions/scripts/orchestrateInstancesOnDemand.js",
+    "orchestrateInstancesOld": "node src/functions/scripts/orchestrateInstancesOld.js"
   },
   "author": "Pedro Muniz",
   "license": "ISC",
