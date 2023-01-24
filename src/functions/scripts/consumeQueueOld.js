@@ -193,7 +193,7 @@ if(isMainThread){
         memoryLeakCounter = 0;
       }
 
-      logger.info(getLocalTime(), `[${id}] Initiating processMessages script`, { messagesNumber: Messages.length, isLastCheckFiveMinutesAgo });
+      logger.info(getLocalTime(), `[${id}] Initiating processMessages script`, { messagesNumber: Messages.length });
 
       let result;
 
