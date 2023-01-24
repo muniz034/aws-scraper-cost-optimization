@@ -100,7 +100,7 @@ if(isMainThread){
 
   for(let i = 0; i < threadCount; i++){
     let batchSize = i < (readBatchSize % threadCount) ? batchPerThread + 1 : batchPerThread;
-    threads.add(new Worker("./src/functions/scripts/consumeQueue.js", { workerData: { id: i, instanceId, readBatchSize: batchSize, sqsQueueUrl, s3ResultBucketName, clouwatchLogGroupName} }));
+    threads.add(new Worker("./src/functions/scripts/consumeQueueOld.js", { workerData: { id: i, instanceId, readBatchSize: batchSize, sqsQueueUrl, s3ResultBucketName, clouwatchLogGroupName} }));
   }
 
   for(let worker of threads) {

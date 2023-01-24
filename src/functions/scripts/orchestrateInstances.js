@@ -245,7 +245,7 @@ const job = new CronJob(
 
     if(newClusterSize < (accrueInstances.length + spendInstances.length)){
       if((accrueInstances.length > spendInstances.length || accrueInstances.length == 0) && approximateAgeOfOldestMessage < sla){
-        await InstancesHelper.terminateInstances({ numberOfInstances: (accrueInstances.length + spendInstances.length) - newClusterSize, instanceCreator: instanceId });
+        await InstancesHelper.terminateInstances({ isBurstable, isOldStrategy, numberOfInstances: (accrueInstances.length + spendInstances.length) - newClusterSize, instanceCreator: instanceId });
       } else {
         logger.warn(getLocalTime(), "Will not reduce cluster because oldest message is greater then SLA", { approximateAgeOfOldestMessage, sla });
       }
@@ -269,8 +269,7 @@ const job = new CronJob(
             try {
               await InstancesHelper.startQueueConsumeOnInstance({ instanceId, creditLimit, isBurstable, privateKey, readBatchSize: parallelProcessingCapacity, clouwatchLogGroupName: config.get("AWS").CLOUDWATCH_LOG_GROUP_NAME, sqsQueueUrl: config.get("AWS").SQS_QUEUE_URL, s3ResultBucketName: config.get("AWS").S3_RESULT_BUCKET_NAME });
             } catch(error) {
-              logger.info(getLocalTime(), error);
-              await InstancesHelper.terminateInstances({ instancesId: [instanceId] });
+              logger.info(getLocalTime(), `[${instanceId}]`, error);
             }
 
           } else {
