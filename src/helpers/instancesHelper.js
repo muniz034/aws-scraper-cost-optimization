@@ -12,8 +12,10 @@ const ec2 = new EC2Client({ region: "us-east-1" });
 export default class InstancesHelper {
   static async getInstances({ maximumNumberOfInstances, filters }) {
     const params = {
-      Filters: filters,
+      Filters: [{ Name: "tag:Owner", Values: ["Pedro Muniz"] }],
     };
+
+    params.Filters.concat(filters); // Solução para não buscar instancias de outros usuários depois de mudar a infraestrutura pro AWS da UFF
 
     const {
       Reservations: reservations,
@@ -28,7 +30,9 @@ export default class InstancesHelper {
 
     const slicedInstances = maximumNumberOfInstances && instances.length > maximumNumberOfInstances ? instances.slice(0, maximumNumberOfInstances) : instances;
 
-    logger.info(getLocalTime(), "Fetched instances", { tags: params.Filters[0].Name, values: params.Filters[0].Values, totalResults: slicedInstances.length });
+    if(slicedInstances.length == 0) return [];
+
+    logger.info(getLocalTime(), "Fetched instances", { values: params.Filter ? params.Filters[0].Values : undefined, totalResults: slicedInstances.length });
 
     return slicedInstances;
   }
@@ -96,7 +100,13 @@ export default class InstancesHelper {
 
     const instances = await this.getInstances(params);
 
-    instanceIds = instances.map((instance) => instance.InstanceId);
+    let instanceIds = instances.map((instance) => instance.InstanceId);
+
+    if(!instanceIds || instanceIds.length == 0){
+      logger.warn(getLocalTime(), "Couldn't find instances to delete");
+
+      return [];
+    }
 
     if(isBurstable == "true" && isOldStrategy == "false"){
       let instanceIdsWithCredits = instanceIds.map(async (instance) => {
@@ -111,30 +121,25 @@ export default class InstancesHelper {
 
       instanceIds = instanceIdsWithCredits.map((instance) => instance.id);
     }
+    
+    logger.info(getLocalTime(), "Terminating instances", { instanceIds });
 
-    if(instanceIds?.length) {
-      logger.info(getLocalTime(), "Terminating instances", { instanceIds });
+    const {
+      TerminatingInstances: terminatingInstances,
+    } = await ec2.send(new TerminateInstancesCommand({
+      InstanceIds: instanceIds,
+    }));
 
-      const {
-        TerminatingInstances: terminatingInstances,
-      } = await ec2.send(new TerminateInstancesCommand({
-        InstanceIds: instanceIds,
-      }));
-
-      return terminatingInstances.map(
-        (terminatingInstance) => (
-          {
-            instanceId: terminatingInstance.InstanceId,
-            newState: terminatingInstance.CurrentState?.Name,
-            previousState: terminatingInstance.PreviousState?.Name,
-          }
-        )
-      );
-    } else {
-      logger.warn(getLocalTime(), "Couldn't find instances to delete");
-
-      return [];
-    }
+    return terminatingInstances.map(
+      (terminatingInstance) => (
+        {
+          instanceId: terminatingInstance.InstanceId,
+          newState: terminatingInstance.CurrentState?.Name,
+          previousState: terminatingInstance.PreviousState?.Name,
+        }
+      )
+    );
+    
   }
 
   static async getInstanceStatus({ instanceId }) {
@@ -249,6 +254,6 @@ export default class InstancesHelper {
       ]
     }));
 
-    return Tags[0].Value;
+    return Tags[0]?.Value;
   }
 }
