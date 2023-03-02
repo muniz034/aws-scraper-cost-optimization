@@ -3,8 +3,8 @@ import { CloudWatchLogsClient, CreateLogStreamCommand, PutLogEventsCommand, Filt
 import { CloudWatchClient, GetMetricDataCommand } from "@aws-sdk/client-cloudwatch";
 import config from "config";
 
-const cloudwatch = new CloudWatchClient({ region: "us-east-1" });
-const cloudwatchLogs = new CloudWatchLogsClient({ region: "us-east-1" });
+const cloudwatch = new CloudWatchClient({ region: "us-west-1" });
+const cloudwatchLogs = new CloudWatchLogsClient({ region: "us-west-1" });
 
 export default class CloudWatchHelper {
   constructor(clouwatchLogGroupName) {

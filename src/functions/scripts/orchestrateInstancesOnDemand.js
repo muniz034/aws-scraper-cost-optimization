@@ -55,7 +55,7 @@ async function getApproximateNumberOfMessages() {
   return parseInt(approximateNumberOfMessages);
 }
 
-const sqs = new SQSClient({ region: "us-east-1" });
+const sqs = new SQSClient({ region: "us-west-1" });
 
 logger.setLevel("info");
 
@@ -77,12 +77,12 @@ let isOldStrategy = "false";
 
 if(!sla) throw new Error(`${getLocalTime()} sla expected as parameter --sla=x`);
 if(!parallelProcessingCapacity) logger.warn(getLocalTime(), "parallelProcessingCapacity expected as parameter --parallelProcessingCapacity=x, default set to 5");
-if(!privateKey) logger.warn(getLocalTime(), "privateKey expected as parameter --privateKey=\"/path/to\", default set to \"/home/ec2-user/aws-scraper-cost-optimization/local/aws-scraper-cost-optimization.pem\"");
+if(!privateKey) logger.warn(getLocalTime(), "privateKey expected as parameter --privateKey=\"/path/to\", default set to \"/home/ec2-user/aws-scraper-cost-optimization/local/pedro_key.pem\"");
 if(!maximumClusterSize) logger.warn(getLocalTime(), "maximumClusterSize expected as parameter --maximumClusterSize=x, default set to 10");
 
 instanceType = isBurstable === "true" ? "t3.micro" : "m1.small";
 parallelProcessingCapacity = 5;
-privateKey = "/home/ec2-user/aws-scraper-cost-optimization/local/aws-scraper-cost-optimization.pem";
+privateKey = "/home/ec2-user/aws-scraper-cost-optimization/local/pedro_key.pem";
 maximumClusterSize = 10;
 
 let currentCost = 0;
@@ -213,7 +213,7 @@ const job = new CronJob(
             await sleep(40000); // 40 sec, wait after status changes to running
 
             try {
-              await InstancesHelper.startQueueConsumeOnInstance({ instanceId, isBurstable, privateKey, readBatchSize: parallelProcessingCapacity, clouwatchLogGroupName: config.get("AWS").CLOUDWATCH_LOG_GROUP_NAME, sqsQueueUrl: config.get("AWS").SQS_QUEUE_URL, s3ResultBucketName: config.get("AWS").S3_RESULT_BUCKET_NAME });
+              await InstancesHelper.startQueueConsumeOnInstance({ instanceId, isOldStrategy, isBurstable, privateKey, readBatchSize: parallelProcessingCapacity, clouwatchLogGroupName: config.get("AWS").CLOUDWATCH_LOG_GROUP_NAME, sqsQueueUrl: config.get("AWS").SQS_QUEUE_URL, s3ResultBucketName: config.get("AWS").S3_RESULT_BUCKET_NAME });
             } catch(error) {
               logger.info(getLocalTime(), `[${instanceId}]`, error);
             }
@@ -227,7 +227,12 @@ const job = new CronJob(
       Promise.allSettled(startCrawlPromises);
     } else if (newClusterSize < actualClusterSize) {
       if (approximateAgeOfOldestMessage < sla) {
-        await InstancesHelper.terminateInstances({ isOldStrategy, isBurstable, numberOfInstances: actualClusterSize - newClusterSize, instanceCreator: instanceId });
+        await InstancesHelper.terminateInstances({ 
+          isOldStrategy, 
+          isBurstable, 
+          numberOfInstances: actualClusterSize - newClusterSize, 
+          instanceCreator: instanceId 
+        });
       } else {
         logger.warn(getLocalTime(), "Will not reduce cluster because oldest message is greater then SLA", { approximateAgeOfOldestMessage, sla });
       }

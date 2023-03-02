@@ -55,7 +55,7 @@ async function getApproximateNumberOfMessages() {
   return parseInt(approximateNumberOfMessages);
 }
 
-const sqs = new SQSClient({ region: "us-east-1" });
+const sqs = new SQSClient({ region: "us-west-1" });
 
 logger.setLevel("info");
 

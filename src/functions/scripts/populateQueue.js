@@ -103,7 +103,7 @@ async function sendMessage(message) {
   return sqs.send(new SendMessageCommand(params));
 }
 
-const sqs = new SQSClient({ region: "us-east-1" });
+const sqs = new SQSClient({ region: "us-west-1" });
 
 logger.setLevel("info");
 

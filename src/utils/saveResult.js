@@ -1,7 +1,7 @@
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 
 export default async function saveResult (result, bucketName, { type, name }) {
-  const s3 = new S3Client({ region: "us-east-1" });
+  const s3 = new S3Client({ region: "us-west-1" });
   const resultS3Path = `${type}/${name}/${Date.now()}`;
 
   await s3.send(new PutObjectCommand({

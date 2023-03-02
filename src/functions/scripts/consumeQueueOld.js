@@ -61,7 +61,7 @@ async function processMessages(messages, browser, S3_RESULT_BUCKET_NAME) {
 
 logger.setLevel("info");
 
-const sqs = new SQSClient({ region: "us-east-1" });
+const sqs = new SQSClient({ region: "us-west-1" });
 
 if(isMainThread){
   let {

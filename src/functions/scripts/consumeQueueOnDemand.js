@@ -1,10 +1,7 @@
 import logger from "loglevel";
 import { SQSClient, ReceiveMessageCommand, DeleteMessageCommand } from "@aws-sdk/client-sqs";
-import { parentPort, Worker, isMainThread, workerData } from "worker_threads";
-import PQueue from "p-queue";
 import minimist from "minimist";
 import config from "config";
-import os from "os";
 
 import startScrapingBatch from "../startScrapingBatch.js";
 import getInstanceId from "../../utils/getInstanceId.js";
@@ -72,7 +69,7 @@ async function processMessages(messages, browser, S3_RESULT_BUCKET_NAME, cloudWa
 
 logger.setLevel("info");
 
-const sqs = new SQSClient({ region: "us-east-1" });
+const sqs = new SQSClient({ region: "us-west-1" });
 
 let {
   _,
