@@ -79,12 +79,12 @@ let isOldStrategy = "false";
 if(!sla) throw new Error(`${getLocalTime()} sla expected as parameter --sla=x`);
 if(!creditLimit && isBurstable == "true") throw new Error("creditLimit expected as parameter --creditLimit=x");
 if(!parallelProcessingCapacity) logger.warn(getLocalTime(), "parallelProcessingCapacity expected as parameter --parallelProcessingCapacity=x, default set to 5");
-if(!privateKey) logger.warn(getLocalTime(), "privateKey expected as parameter --privateKey=\"/path/to\", default set to \"/home/ec2-user/aws-scraper-cost-optimization/local/aws-scraper-cost-optimization.pem\"");
+if(!privateKey) logger.warn(getLocalTime(), "privateKey expected as parameter --privateKey=\"/path/to\", default set to \"/home/ec2-user/aws-scraper-cost-optimization/local/pedro_key.pem\"");
 if(!maximumClusterSize) logger.warn(getLocalTime(), "maximumClusterSize expected as parameter --maximumClusterSize=x, default set to 10");
 
 instanceType = isBurstable === "true" ? "t3.micro" : "m1.small";
 parallelProcessingCapacity = 5;
-privateKey = "/home/ec2-user/aws-scraper-cost-optimization/local/aws-scraper-cost-optimization.pem";
+privateKey = "/home/ec2-user/aws-scraper-cost-optimization/local/pedro_key.pem";
 maximumClusterSize = 10;
 
 let currentCost = 0;
@@ -245,7 +245,13 @@ const job = new CronJob(
 
     if(newClusterSize < (accrueInstances.length + spendInstances.length)){
       if((accrueInstances.length > spendInstances.length || accrueInstances.length == 0) && approximateAgeOfOldestMessage < sla){
-        await InstancesHelper.terminateInstances({ isBurstable, isOldStrategy, numberOfInstances: (accrueInstances.length + spendInstances.length) - newClusterSize, instanceCreator: instanceId });
+        await InstancesHelper.terminateInstances({ 
+          numberOfInstances: (accrueInstances.length + spendInstances.length) - newClusterSize, 
+          instanceCreator: instanceId,
+          isOldStrategy, 
+          isBurstable
+        });
+
       } else {
         logger.warn(getLocalTime(), "Will not reduce cluster because oldest message is greater then SLA", { approximateAgeOfOldestMessage, sla });
       }

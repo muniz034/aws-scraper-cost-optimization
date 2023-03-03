@@ -15,7 +15,7 @@ export default class InstancesHelper {
       Filters: [{ Name: "tag:Owner", Values: ["Pedro Muniz"] }],
     };
 
-    params.Filters.concat(filters); // Solução para não buscar instancias de outros usuários depois de mudar a infraestrutura pro AWS da UFF
+    params.Filters = params.Filters.concat(filters); // Solução para não buscar instancias de outros usuários depois de mudar a infraestrutura pro AWS da UFF
 
     const {
       Reservations: reservations,
@@ -32,7 +32,7 @@ export default class InstancesHelper {
 
     if(slicedInstances.length == 0) return [];
 
-    logger.info(getLocalTime(), "Fetched instances", { values: params.Filter ? params.Filters[0].Values : undefined, totalResults: slicedInstances.length });
+    logger.info(getLocalTime(), "Fetched instances", { values: params.Filters ? params.Filters[0].Values : undefined, totalResults: slicedInstances.length });
 
     return slicedInstances;
   }
@@ -51,12 +51,34 @@ export default class InstancesHelper {
 
     if(isOldStrategy == "true"){
       params.CreditSpecification = "unlimited";
-      params.TagSpecifications = [{ ResourceType: "instance", Tags: [{ Key: "isOrchestrator", Value: "false" }, { Key: "from", Value: instanceCreator }] }];
+      params.TagSpecifications = [{ 
+        ResourceType: "instance", 
+        Tags: [
+          { Key: "isOrchestrator", Value: "false" }, 
+          { Key: "from", Value: instanceCreator },
+          { Key: "Owner", Value: "Pedro Muniz"}
+        ]
+      }];
     } else if(isBurstable == "true"){
       params.CreditSpecification = "standard";
-      params.TagSpecifications = [{ ResourceType: "instance", Tags: [{ Key: "isOrchestrator", Value: "false" }, { Key: "frameworkState", Value: "accrue" }, { Key: "from", Value: instanceCreator }]}];
+      params.TagSpecifications = [{ 
+        ResourceType: "instance", 
+        Tags: [
+          { Key: "isOrchestrator", Value: "false" }, 
+          { Key: "frameworkState", Value: "accrue" }, 
+          { Key: "from", Value: instanceCreator },
+          { Key: "Owner", Value: "Pedro Muniz"}
+        ]
+      }];
     } else {
-      params.TagSpecifications = [{ ResourceType: "instance", Tags: [{ Key: "isOrchestrator", Value: "false" }, { Key: "from", Value: instanceCreator }] }];
+      params.TagSpecifications = [{ 
+        ResourceType: "instance", 
+        Tags: [
+          { Key: "isOrchestrator", Value: "false" }, 
+          { Key: "from", Value: instanceCreator },
+          { Key: "Owner", Value: "Pedro Muniz"}
+        ]
+      }];
     }
 
     const { Instances: instances } = await ec2.send(new RunInstancesCommand(params));
@@ -87,6 +109,10 @@ export default class InstancesHelper {
         {
           Name: "tag:from",
           Values: [instanceCreator]
+        },
+        {
+          Name: "tag:Owner",
+          Values: ["Pedro Muniz"]
         }
       ],
     };
@@ -120,6 +146,8 @@ export default class InstancesHelper {
       });
 
       instanceIds = instanceIdsWithCredits.map((instance) => instance.id);
+
+      instanceIds = instanceIds.slice(0, numberOfInstances);
     }
     
     logger.info(getLocalTime(), "Terminating instances", { instanceIds });
@@ -184,9 +212,10 @@ export default class InstancesHelper {
     s3ResultBucketName,
     clouwatchLogGroupName,
     isBurstable,
-    creditLimit
+    creditLimit,
+    isOldStrategy
   } = {}) {
-    // logger.info(getLocalTime(), "Getting public dns of the provided instance", { instanceId });
+    logger.info(getLocalTime(), "Getting public dns of the provided instance", { instanceId });
 
     const {
       Reservations: [{ Instances: [instance] } = {}]
@@ -200,7 +229,7 @@ export default class InstancesHelper {
 
     const ssh = new NodeSSH();
 
-    // logger.info(getLocalTime(), "Connect SSH", { instanceId, username, privateKey });
+    logger.info(getLocalTime(), "Connect SSH", { instanceId, username, privateKey });
 
     await ssh.connect({
       host,
@@ -208,8 +237,6 @@ export default class InstancesHelper {
       privateKey,
     });
 
-    // Caso creditLimit seja undefined (false), então é a estratégia antiga
-    let isOldStrategy = !!!creditLimit;
     let params = "";
 
     if(isOldStrategy){
@@ -224,7 +251,7 @@ export default class InstancesHelper {
     
     // { cwd:"/home/ec2-user/aws-scraper-cost-optimization", onStdout(chunk) { console.log('stdoutChunk', chunk.toString('utf8')) }, onStderr(chunk) { console.log('stderrChunk', chunk.toString('utf8')) }}
     
-    // logger.info(getLocalTime(), "Run consume queue", { instanceId, username, privateKey, params });
+    logger.info(getLocalTime(), "Run consume queue", { instanceId, username, privateKey, params });
 
     return ssh.execCommand(...params);
   }
