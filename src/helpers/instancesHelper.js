@@ -239,7 +239,7 @@ export default class InstancesHelper {
 
     let params = "";
 
-    if(isOldStrategy){
+    if(isOldStrategy == "true"){
       params = [`npm run consumeQueueOld -- --readBatchSize=${readBatchSize} --sqsQueueUrl=${sqsQueueUrl} --s3ResultBucketName=${s3ResultBucketName} --clouwatchLogGroupName=${clouwatchLogGroupName}`];
     } else if(isBurstable == "true") {
       params = [`npm run consumeQueue -- --creditLimit=${creditLimit} --readBatchSize=${readBatchSize} --sqsQueueUrl=${sqsQueueUrl} --s3ResultBucketName=${s3ResultBucketName} --clouwatchLogGroupName=${clouwatchLogGroupName}`];
